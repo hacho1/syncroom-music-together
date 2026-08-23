@@ -756,7 +756,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     [currentTrack.duration, elapsed],
   );
   const hasPlayableVideo = isYouTubeVideoId(currentTrack.videoId);
-  const canPressPlay = roomReady && (hasPlayableVideo || queue.length > 0);
+  const canPressPlay = roomReady;
   const requestIsPlaylist = isYouTubePlaylistInput(request.trim());
 
   async function playNext() {
@@ -765,14 +765,15 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
       return;
     }
     try {
-      const nextTitle = queue[0]?.title;
       const state = await roomAction({ action: 'playback:next' });
       const nextVideoId = state.currentTrack.videoId;
       if (playerReady && playerRef.current && isYouTubeVideoId(nextVideoId)) {
         loadedVideoIdRef.current = nextVideoId;
         playerRef.current.loadVideoById({ videoId: nextVideoId, startSeconds: 0 });
       }
-      setToast(nextTitle ? `다음 곡 · ${nextTitle}` : '다음 곡을 재생해요');
+      setToast(state.currentTrack.requestedBy === 'SYNCROOM 추천'
+        ? `랜덤 추천 · ${state.currentTrack.title}`
+        : `다음 곡 · ${state.currentTrack.title}`);
     } catch (actionError) {
       setToast(actionError instanceof Error ? actionError.message : '다음 곡을 재생하지 못했어요.');
     }
@@ -781,8 +782,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   async function togglePlayback() {
     const hasVideo = isYouTubeVideoId(currentTrack.videoId);
     if (!hasVideo) {
-      if (queue.length) await playNext();
-      else setToast('먼저 노래를 신청해 주세요');
+      await playNext();
       return;
     }
 
@@ -1065,7 +1065,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
               >
                 {isPlaying ? <span className="pause-icon"><i /><i /></span> : <span className="play-icon">▶</span>}
               </button>
-              <button type="button" className="side-control next-control" onClick={() => void playNext()} disabled={!roomReady || !queue.length} aria-label="다음 곡">
+              <button type="button" className="side-control next-control" onClick={() => void playNext()} disabled={!roomReady} aria-label="다음 곡 또는 랜덤 추천곡">
                 <span>▶</span><i />
               </button>
             </div>

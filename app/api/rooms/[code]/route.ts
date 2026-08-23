@@ -48,6 +48,24 @@ type ParticipantRow = {
   last_seen: number;
 };
 
+type YouTubeChartResponse = {
+  items?: Array<{
+    id?: string;
+    snippet?: {
+      title?: string;
+      channelTitle?: string;
+      liveBroadcastContent?: string;
+      thumbnails?: {
+        high?: { url?: string };
+        medium?: { url?: string };
+        default?: { url?: string };
+      };
+    };
+    contentDetails?: { duration?: string };
+    status?: { embeddable?: boolean; privacyStatus?: string };
+  }>;
+};
+
 const colors = ['#ff3d78', '#8b7cff', '#ffb84d', '#42d6aa', '#5d90ff', '#ef6fff'];
 
 function roomCode(value: string) {
@@ -56,6 +74,64 @@ function roomCode(value: string) {
 
 function safeText(value: unknown, maxLength: number) {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
+}
+
+function decodeEntities(value: string) {
+  return value
+    .replaceAll('&amp;', '&')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&quot;', '"')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>');
+}
+
+function parseYouTubeDuration(value = '') {
+  const match = value.match(/^P(?:(\d+)D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
+  if (!match) return 204;
+  const [, days, hours, minutes, seconds] = match;
+  return Math.max(1, Math.min(86_400,
+    Number(days || 0) * 86_400
+    + Number(hours || 0) * 3_600
+    + Number(minutes || 0) * 60
+    + Number(seconds || 0),
+  ));
+}
+
+async function randomFallbackTrack(currentVideoId: string) {
+  const apiKey = process.env.YOUTUBE_API_KEY;
+  if (!apiKey) return null;
+  const endpoint = new URL('https://www.googleapis.com/youtube/v3/videos');
+  endpoint.searchParams.set('part', 'snippet,contentDetails,status');
+  endpoint.searchParams.set('chart', 'mostPopular');
+  endpoint.searchParams.set('regionCode', 'KR');
+  endpoint.searchParams.set('videoCategoryId', '10');
+  endpoint.searchParams.set('maxResults', '50');
+  const response = await fetch(endpoint, {
+    headers: { Accept: 'application/json', 'x-goog-api-key': apiKey },
+  });
+  if (!response.ok) return null;
+  const data = await response.json() as YouTubeChartResponse;
+  const playable = (data.items || []).filter((item) => (
+    item.id
+    && item.id !== currentVideoId
+    && item.snippet?.title
+    && item.status?.embeddable === true
+    && item.status?.privacyStatus !== 'private'
+    && item.snippet.liveBroadcastContent !== 'live'
+  ));
+  if (!playable.length) return null;
+  const selected = playable[Math.floor(Math.random() * playable.length)];
+  return {
+    videoId: selected.id as string,
+    title: decodeEntities(selected.snippet?.title || 'YouTube 인기 음악'),
+    artist: decodeEntities(selected.snippet?.channelTitle || 'YouTube'),
+    thumbnail: selected.snippet?.thumbnails?.high?.url
+      || selected.snippet?.thumbnails?.medium?.url
+      || selected.snippet?.thumbnails?.default?.url
+      || null,
+    requestedBy: 'SYNCROOM 추천',
+    duration: parseYouTubeDuration(selected.contentDetails?.duration),
+  };
 }
 
 function guestColor(guestId: string) {
@@ -285,20 +361,38 @@ export async function POST(request: Request, { params }: RouteContext) {
         .bind(Math.min(86_400, duration), now, code).run();
     } else if (action === 'playback:next') {
       if (!(await requireHost(database, code, guestId))) return error('DJ만 다음 곡을 재생할 수 있어요.', 403);
-      const playbackState = await database.prepare('SELECT shuffle FROM playback WHERE room_code = ?')
-        .bind(code).first<{ shuffle: number }>();
+      const playbackState = await database.prepare('SELECT shuffle, video_id FROM playback WHERE room_code = ?')
+        .bind(code).first<{ shuffle: number; video_id: string }>();
       const nextQuery = playbackState?.shuffle
         ? 'SELECT * FROM queue_items WHERE room_code = ? ORDER BY RANDOM() LIMIT 1'
         : 'SELECT * FROM queue_items WHERE room_code = ? ORDER BY id ASC LIMIT 1';
       const next = await database.prepare(nextQuery).bind(code).first<QueueRow>();
-      if (!next) return error('대기열에 다음 곡이 없어요.', 409);
-      await database.batch([
-        database.prepare(`UPDATE playback SET video_id = ?, title = ?, artist = ?, thumbnail = ?, requested_by = ?,
+      if (next) {
+        await database.batch([
+          database.prepare(`UPDATE playback SET video_id = ?, title = ?, artist = ?, thumbnail = ?, requested_by = ?,
+            duration = ?, playing = 1, position = 0, position_updated_at = ?, revision = revision + 1, updated_at = ?
+            WHERE room_code = ?`)
+            .bind(next.video_id, next.title, next.artist, next.thumbnail, next.requested_by, next.duration, now, now, code),
+          database.prepare('DELETE FROM queue_items WHERE room_code = ? AND id = ?').bind(code, next.id),
+        ]);
+      } else {
+        const fallback = await randomFallbackTrack(playbackState?.video_id || '');
+        if (!fallback) return error('추천곡을 불러오지 못했어요. 노래를 하나 신청해 주세요.', 502);
+        await database.prepare(`UPDATE playback SET video_id = ?, title = ?, artist = ?, thumbnail = ?, requested_by = ?,
           duration = ?, playing = 1, position = 0, position_updated_at = ?, revision = revision + 1, updated_at = ?
           WHERE room_code = ?`)
-          .bind(next.video_id, next.title, next.artist, next.thumbnail, next.requested_by, next.duration, now, now, code),
-        database.prepare('DELETE FROM queue_items WHERE room_code = ? AND id = ?').bind(code, next.id),
-      ]);
+          .bind(
+            fallback.videoId,
+            fallback.title,
+            fallback.artist,
+            fallback.thumbnail,
+            fallback.requestedBy,
+            fallback.duration,
+            now,
+            now,
+            code,
+          ).run();
+      }
     } else {
       return error('지원하지 않는 음악방 동작이에요.', 400);
     }
