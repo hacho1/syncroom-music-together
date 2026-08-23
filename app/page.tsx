@@ -178,6 +178,43 @@ function formatTime(seconds: number) {
   return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, '0')}`;
 }
 
+function ScrollingTitle({ title }: { title: string }) {
+  const viewportRef = useRef<HTMLHeadingElement | null>(null);
+  const textRef = useRef<HTMLSpanElement | null>(null);
+  const [shouldScroll, setShouldScroll] = useState(false);
+  const [duration, setDuration] = useState(14);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    const text = textRef.current;
+    if (!viewport || !text) return;
+    const update = () => {
+      const textWidth = text.scrollWidth;
+      setShouldScroll(textWidth > viewport.clientWidth + 1);
+      setDuration(Math.max(12, Math.min(28, textWidth / 22)));
+    };
+    update();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    observer?.observe(viewport);
+    observer?.observe(text);
+    return () => observer?.disconnect();
+  }, [title]);
+
+  return (
+    <h2
+      ref={viewportRef}
+      className={`marquee-title ${shouldScroll ? 'is-scrolling' : ''}`}
+      aria-label={title}
+      style={{ '--marquee-duration': `${duration}s` } as React.CSSProperties}
+    >
+      <span className="marquee-title-track">
+        <span ref={textRef} className="marquee-title-text">{title}</span>
+        {shouldScroll && <span className="marquee-title-text" aria-hidden="true">{title}</span>}
+      </span>
+    </h2>
+  );
+}
+
 function BrandMark() {
   return <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>;
 }
@@ -975,7 +1012,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
             <div className="track-copy">
               <div>
                 <p id="now-playing-title" className="section-kicker">지금 함께 듣는 중</p>
-                <h2>{currentTrack.title}</h2>
+                <ScrollingTitle title={currentTrack.title} />
                 <p>{currentTrack.artist} <span>·</span> 신청 {currentTrack.requestedBy}</p>
               </div>
               <div className="volume-control" aria-label="이 기기 음량">
