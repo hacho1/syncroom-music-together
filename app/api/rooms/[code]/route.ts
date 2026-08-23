@@ -68,6 +68,13 @@ function error(message: string, status: number) {
   return Response.json({ error: message }, { status });
 }
 
+function expiredRoom() {
+  return Response.json({
+    error: '이 초대 코드는 만료되었어요. 방장에게 새 초대 코드를 요청해 주세요.',
+    code: 'ROOM_EXPIRED',
+  }, { status: 410 });
+}
+
 async function participantExists(database: D1Database, code: string, guestId: string) {
   const row = await database.prepare(
     'SELECT guest_id FROM participants WHERE room_code = ? AND guest_id = ?',
@@ -168,7 +175,7 @@ export async function GET(request: Request, { params }: RouteContext) {
   const viewerGuestId = safeText(request.headers.get('x-syncroom-guest'), 80);
   const database = await ensureDatabase(getDatabase());
   const state = await readRoomState(database, code, viewerGuestId);
-  return state ? Response.json(state) : error('존재하지 않거나 만료된 음악방이에요.', 404);
+  return state ? Response.json(state) : expiredRoom();
 }
 
 export async function POST(request: Request, { params }: RouteContext) {
@@ -186,7 +193,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     if (!guestId || !nickname) return error('닉네임을 입력해 주세요.', 400);
     let room = await database.prepare('SELECT * FROM rooms WHERE code = ?').bind(code).first<RoomRow>();
     const create = body.create === true;
-    if (!room && !create) return error('존재하지 않거나 만료된 음악방이에요.', 404);
+    if (!room && !create) return expiredRoom();
     if (!room) {
       const name = safeText(body.roomName, 24) || '함께 듣는 음악방';
       await database.batch([
@@ -293,5 +300,5 @@ export async function POST(request: Request, { params }: RouteContext) {
   }
 
   const state = await readRoomState(database, code, guestId);
-  return state ? Response.json(state) : error('음악방 상태를 불러오지 못했어요.', 500);
+  return state ? Response.json(state) : expiredRoom();
 }

@@ -84,6 +84,23 @@ function isYouTubeVideoId(videoId: string) {
   return /^[A-Za-z0-9_-]{11}$/.test(videoId);
 }
 
+function isYouTubePlaylistInput(value: string) {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase().replace(/^www\./, '');
+    return ['youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be'].includes(host)
+      && Boolean(url.searchParams.get('list'));
+  } catch {
+    return false;
+  }
+}
+
+function roomResponseError(response: Response, data: { error?: string; code?: string }, fallback: string) {
+  const error = new Error(data.error || fallback);
+  if (response.status === 410 || data.code === 'ROOM_EXPIRED') error.name = 'RoomExpiredError';
+  return error;
+}
+
 function loadYouTubeApi() {
   if (window.YT?.Player) return Promise.resolve(window.YT);
   if (youtubeApiPromise) return youtubeApiPromise;
@@ -290,7 +307,7 @@ function HelpScreen() {
             <h2>자주 묻는 질문</h2>
             <details><summary>로그인이 꼭 필요한가요?<span>＋</span></summary><p>아니요. 닉네임만 정하면 바로 방을 만들거나 참가할 수 있도록 설계했어요.</p></details>
             <details><summary>음악은 어디서 재생되나요?<span>＋</span></summary><p>YouTube 공식 플레이어를 화면에 표시하고 각 참가자의 브라우저에서 재생하는 구조예요.</p></details>
-            <details><summary>초대 코드는 얼마나 유지되나요?<span>＋</span></summary><p>현재는 서버에 저장되어 새로고침 후에도 같은 코드로 다시 입장할 수 있어요. 자동 만료 설정은 다음 단계에서 추가할 수 있어요.</p></details>
+            <details><summary>초대 코드는 얼마나 유지되나요?<span>＋</span></summary><p>방이 유지되는 동안 사용할 수 있어요. 방이 삭제되거나 만료되면 해당 코드도 함께 만료되고 별도 안내가 표시됩니다.</p></details>
           </section>
 
           <Link href="/" className="primary-start help-home">홈으로 돌아가기</Link>
@@ -321,6 +338,8 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   const [shouldCreate, setShouldCreate] = useState(false);
   const [roomReady, setRoomReady] = useState(false);
   const [roomError, setRoomError] = useState('');
+  const [checkingInvite, setCheckingInvite] = useState(initialView === 'room');
+  const [inviteExpired, setInviteExpired] = useState(false);
   const [isHost, setIsHost] = useState(false);
   const [connectionMode, setConnectionMode] = useState<'connecting' | 'socket' | 'polling' | 'offline'>('connecting');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -371,8 +390,17 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
       cache: 'no-store',
       headers: { 'x-syncroom-guest': guestId },
     });
-    const data = await response.json() as RoomState & { error?: string };
-    if (!response.ok) throw new Error(data.error || '음악방 상태를 불러오지 못했어요.');
+    const data = await response.json() as RoomState & { error?: string; code?: string };
+    if (!response.ok) {
+      const responseError = roomResponseError(response, data, '음악방 상태를 불러오지 못했어요.');
+      if (responseError.name === 'RoomExpiredError') {
+        setInviteExpired(true);
+        setCheckingInvite(false);
+        setRoomReady(false);
+        setJoined(false);
+      }
+      throw responseError;
+    }
     applyRoomState(data);
   }, [applyRoomState, guestId, roomCode]);
 
@@ -382,8 +410,17 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ ...payload, guestId, nickname }),
     });
-    const data = await response.json() as RoomState & { error?: string };
-    if (!response.ok) throw new Error(data.error || '음악방 요청을 처리하지 못했어요.');
+    const data = await response.json() as RoomState & { error?: string; code?: string };
+    if (!response.ok) {
+      const responseError = roomResponseError(response, data, '음악방 요청을 처리하지 못했어요.');
+      if (responseError.name === 'RoomExpiredError') {
+        setInviteExpired(true);
+        setCheckingInvite(false);
+        setRoomReady(false);
+        setJoined(false);
+      }
+      throw responseError;
+    }
     applyRoomState(data);
     socketRef.current?.emit('room:refresh', { reason: String(payload.action || 'state-changed') });
     return data;
@@ -395,20 +432,52 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
 
   useEffect(() => {
     if (initialView !== 'room') return;
+    let cancelled = false;
     const params = new URLSearchParams(window.location.search);
     const queryRoom = params.get('room');
     const queryName = params.get('name');
     const savedRoom = window.localStorage.getItem(`syncroom:room:${roomCode}`);
     const savedName = window.localStorage.getItem('syncroom:nickname');
+    const nextGuestId = getOrCreateGuestId();
+    const createRoom = params.get('create') === '1';
     // Browser storage is the guest session source and is only available after hydration.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setRoomName(queryRoom?.trim() || savedRoom || '함께 듣는 음악방');
-    setGuestId(getOrCreateGuestId());
-    setShouldCreate(params.get('create') === '1');
+    setGuestId(nextGuestId);
+    setShouldCreate(createRoom);
     const nextName = queryName?.trim() || savedName || '';
     setNickname(nextName);
     setGuestName(nextName);
     setJoined(Boolean(nextName));
+    setInviteExpired(false);
+
+    if (createRoom) {
+      setCheckingInvite(false);
+      return () => { cancelled = true; };
+    }
+
+    fetch(`/api/rooms/${roomCode}`, {
+      cache: 'no-store',
+      headers: { 'x-syncroom-guest': nextGuestId },
+    }).then(async (response) => {
+      const data = await response.json() as RoomState & { error?: string; code?: string };
+      if (cancelled) return;
+      if (!response.ok) {
+        if (response.status === 410 || data.code === 'ROOM_EXPIRED') {
+          setInviteExpired(true);
+          setJoined(false);
+        } else {
+          setRoomError(data.error || '초대 코드를 확인하지 못했어요. 다시 시도해 주세요.');
+        }
+        return;
+      }
+      setRoomName(data.room.name);
+    }).catch(() => {
+      if (!cancelled) setRoomError('초대 코드를 확인하지 못했어요. 다시 시도해 주세요.');
+    }).finally(() => {
+      if (!cancelled) setCheckingInvite(false);
+    });
+    return () => { cancelled = true; };
   }, [initialView, roomCode]);
 
   useEffect(() => {
@@ -425,8 +494,8 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
         create: shouldCreate,
       }),
     }).then(async (response) => {
-      const data = await response.json() as RoomState & { error?: string };
-      if (!response.ok) throw new Error(data.error || '음악방에 입장하지 못했어요.');
+      const data = await response.json() as RoomState & { error?: string; code?: string };
+      if (!response.ok) throw roomResponseError(response, data, '음악방에 입장하지 못했어요.');
       if (cancelled) return;
       applyRoomState(data);
       setRoomReady(true);
@@ -437,6 +506,10 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
       setRoomReady(false);
       setJoined(false);
       setConnectionMode('offline');
+      if (joinError instanceof Error && joinError.name === 'RoomExpiredError') {
+        setInviteExpired(true);
+        setCheckingInvite(false);
+      }
       setRoomError(joinError instanceof Error ? joinError.message : '음악방에 입장하지 못했어요.');
     });
     return () => { cancelled = true; };
@@ -616,6 +689,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   );
   const hasPlayableVideo = isYouTubeVideoId(currentTrack.videoId);
   const canPressPlay = roomReady && (hasPlayableVideo || queue.length > 0);
+  const requestIsPlaylist = isYouTubePlaylistInput(request.trim());
 
   async function playNext() {
     if (!isHost) {
@@ -742,6 +816,28 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     setSearching(true);
     setSearchError('');
     try {
+      if (isYouTubePlaylistInput(query)) {
+        const response = await fetch('/api/youtube/playlist', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-syncroom-code': roomCode,
+            'x-syncroom-guest': guestId,
+          },
+          body: JSON.stringify({ url: query }),
+        });
+        const data = await response.json() as { imported?: number; skipped?: number; total?: number; error?: string };
+        if (!response.ok) throw new Error(data.error || '재생목록을 추가하지 못했어요.');
+        await fetchRoomState();
+        socketRef.current?.emit('room:refresh', { reason: 'playlist-imported' });
+        setRequest('');
+        setSearchResults([]);
+        setActiveTab('queue');
+        const skippedText = data.skipped ? ` · ${data.skipped}곡 제외` : '';
+        setToast(`재생목록 ${data.imported || 0}곡 추가${skippedText}`);
+        return;
+      }
+
       const response = await fetch(`/api/youtube/search?q=${encodeURIComponent(query)}`, {
         headers: {
           'x-syncroom-code': roomCode,
@@ -989,7 +1085,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
         {(searchResults.length > 0 || searchError) && (
           <section className="search-sheet" aria-label="YouTube 검색 결과">
             <div className="search-sheet-head">
-              <div><p>YOUTUBE SEARCH</p><h2>검색 결과</h2></div>
+              <div><p>{requestIsPlaylist ? 'YOUTUBE PLAYLIST' : 'YOUTUBE SEARCH'}</p><h2>{requestIsPlaylist ? '재생목록 추가' : '검색 결과'}</h2></div>
               <button type="button" onClick={() => { setSearchResults([]); setSearchError(''); }} aria-label="검색 결과 닫기">×</button>
             </div>
             {demoSearch && <p className="demo-notice"><span>DEMO</span> API 키를 연결하면 실제 YouTube 결과로 바뀌어요.</p>}
@@ -1015,23 +1111,43 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
             value={request}
             onChange={(event) => setRequest(event.target.value)}
             aria-label="신청곡 검색"
-            placeholder="노래 제목이나 YouTube 링크"
+            placeholder="노래 제목 또는 YouTube 재생목록 링크"
           />
-          <button type="submit" disabled={!request.trim() || searching || !roomReady}>{searching ? '검색 중' : '검색'}</button>
+          <button type="submit" disabled={!request.trim() || searching || !roomReady}>
+            {searching ? (requestIsPlaylist ? '추가 중' : '검색 중') : requestIsPlaylist ? '목록 추가' : '검색'}
+          </button>
         </form>
 
-        {!joined && (
+        {(checkingInvite || inviteExpired || !joined) && (
           <div className="guest-gate" role="dialog" aria-modal="true" aria-labelledby="guest-gate-title">
-            <form className="guest-card" onSubmit={joinAsGuest}>
-              <BrandMark />
-              <p className="home-kicker">INVITED TO ROOM</p>
-              <h2 id="guest-gate-title">{roomName}</h2>
-              <div className="gate-code"><span>초대 코드</span><strong>{roomCode}</strong></div>
-              <label>이 방에서 사용할 닉네임<input autoFocus value={guestName} maxLength={12} onChange={(event) => setGuestName(event.target.value)} placeholder="닉네임 입력" /></label>
-              {roomError && <p className="form-error" role="alert">{roomError}</p>}
-              <button className="primary-start" type="submit" disabled={!guestName.trim()}>로그인 없이 입장하기 <span>→</span></button>
-              <Link href="/">다른 방 찾기</Link>
-            </form>
+            {checkingInvite ? (
+              <div className="guest-card invite-checking-card">
+                <BrandMark />
+                <p className="home-kicker">CHECKING INVITE</p>
+                <h2 id="guest-gate-title">초대 코드를 확인하고 있어요</h2>
+                <div className="invite-loader" aria-label="초대 코드 확인 중"><span /><span /><span /></div>
+              </div>
+            ) : inviteExpired ? (
+              <div className="guest-card expired-invite-card">
+                <BrandMark />
+                <div className="expired-icon" aria-hidden="true">×</div>
+                <p className="home-kicker">INVITE EXPIRED</p>
+                <h2 id="guest-gate-title">초대 코드가 만료되었어요</h2>
+                <p className="expired-copy">방이 종료되어 <strong>{roomCode}</strong> 코드는 더 이상 사용할 수 없어요.<br />방장에게 새 초대 코드를 요청해 주세요.</p>
+                <Link className="primary-start" href="/">홈에서 새 방 찾기 <span>→</span></Link>
+              </div>
+            ) : (
+              <form className="guest-card" onSubmit={joinAsGuest}>
+                <BrandMark />
+                <p className="home-kicker">INVITED TO ROOM</p>
+                <h2 id="guest-gate-title">{roomName}</h2>
+                <div className="gate-code"><span>초대 코드</span><strong>{roomCode}</strong></div>
+                <label>이 방에서 사용할 닉네임<input autoFocus value={guestName} maxLength={12} onChange={(event) => setGuestName(event.target.value)} placeholder="닉네임 입력" /></label>
+                {roomError && <p className="form-error" role="alert">{roomError}</p>}
+                <button className="primary-start" type="submit" disabled={!guestName.trim()}>로그인 없이 입장하기 <span>→</span></button>
+                <Link href="/">다른 방 찾기</Link>
+              </form>
+            )}
           </div>
         )}
 
