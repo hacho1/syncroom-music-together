@@ -45,9 +45,13 @@ export async function GET(request: Request) {
   endpoint.searchParams.set('videoEmbeddable', 'true');
   endpoint.searchParams.set('maxResults', '5');
   endpoint.searchParams.set('q', query);
-  endpoint.searchParams.set('key', apiKey);
 
-  const response = await fetch(endpoint, { headers: { Accept: 'application/json' } });
+  const response = await fetch(endpoint, {
+    headers: {
+      Accept: 'application/json',
+      'x-goog-api-key': apiKey,
+    },
+  });
   if (!response.ok) {
     return Response.json({ error: 'YouTube 검색을 잠시 사용할 수 없어요.' }, { status: 502 });
   }
