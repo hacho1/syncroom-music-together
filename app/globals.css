@@ -171,6 +171,37 @@ button { color: inherit; }
 .cover-art.amber { background: linear-gradient(145deg, #9d5b18, #281307 64%, #0b0908); }
 .cover-art.blue { background: linear-gradient(145deg, #0f4f88, #071c31 64%, #07090c); }
 .cover-art.mint { background: linear-gradient(145deg, #15765f, #08241d 64%, #070b0a); }
+.cover-art.has-video { background: #000; }
+
+.youtube-player-shell {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  overflow: hidden;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+.youtube-player-shell.visible { opacity: 1; pointer-events: auto; }
+.youtube-player-shell > div,
+.youtube-player-shell iframe { display: block; width: 100% !important; height: 100% !important; border: 0; }
+.player-message {
+  position: absolute;
+  z-index: 4;
+  right: 12px;
+  bottom: 10px;
+  left: 12px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 9px;
+  background: rgba(8,9,11,.86);
+  color: #c8cad0;
+  font-size: 9px;
+  text-align: center;
+  pointer-events: none;
+}
+.player-message.error { color: #ffb5c9; }
 
 .cover-noise {
   position: absolute;

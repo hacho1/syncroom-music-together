@@ -40,7 +40,81 @@ type SearchResult = {
   thumbnail: string | null;
 };
 
+type YouTubePlayer = {
+  cueVideoById(options: { videoId: string; startSeconds?: number }): void;
+  loadVideoById(options: { videoId: string; startSeconds?: number }): void;
+  playVideo(): void;
+  pauseVideo(): void;
+  seekTo(seconds: number, allowSeekAhead: boolean): void;
+  getCurrentTime(): number;
+  getPlayerState(): number;
+  destroy(): void;
+};
+
+type YouTubePlayerEvent = { target: YouTubePlayer; data: number };
+
+type YouTubeNamespace = {
+  Player: new (element: HTMLElement, options: {
+    width: string;
+    height: string;
+    playerVars: Record<string, string | number>;
+    events: {
+      onReady(event: YouTubePlayerEvent): void;
+      onStateChange(event: YouTubePlayerEvent): void;
+      onError(event: YouTubePlayerEvent): void;
+    };
+  }) => YouTubePlayer;
+};
+
+declare global {
+  interface Window {
+    YT?: YouTubeNamespace;
+    onYouTubeIframeAPIReady?: () => void;
+  }
+}
+
 type AppView = 'home' | 'room' | 'help';
+
+let youtubeApiPromise: Promise<YouTubeNamespace> | null = null;
+
+function isYouTubeVideoId(videoId: string) {
+  return /^[A-Za-z0-9_-]{11}$/.test(videoId);
+}
+
+function loadYouTubeApi() {
+  if (window.YT?.Player) return Promise.resolve(window.YT);
+  if (youtubeApiPromise) return youtubeApiPromise;
+
+  youtubeApiPromise = new Promise<YouTubeNamespace>((resolve, reject) => {
+    const previousReady = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      previousReady?.();
+      if (window.YT?.Player) resolve(window.YT);
+    };
+
+    let script = document.querySelector<HTMLScriptElement>('script[src="https://www.youtube.com/iframe_api"]');
+    if (!script) {
+      script = document.createElement('script');
+      script.src = 'https://www.youtube.com/iframe_api';
+      script.async = true;
+      document.head.appendChild(script);
+    }
+    script.addEventListener('error', () => {
+      youtubeApiPromise = null;
+      reject(new Error('YouTube player API failed to load'));
+    }, { once: true });
+
+    window.setTimeout(() => {
+      if (window.YT?.Player) resolve(window.YT);
+      else {
+        youtubeApiPromise = null;
+        reject(new Error('YouTube player API timed out'));
+      }
+    }, 15_000);
+  });
+
+  return youtubeApiPromise;
+}
 
 function makeRoomCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -248,8 +322,20 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
   const [demoSearch, setDemoSearch] = useState(false);
+  const [playerReady, setPlayerReady] = useState(false);
+  const [playerError, setPlayerError] = useState('');
+  const [playbackRevision, setPlaybackRevision] = useState(0);
   const socketRef = useRef<Socket | null>(null);
   const revisionRef = useRef(0);
+  const youtubeMountRef = useRef<HTMLDivElement | null>(null);
+  const playerRef = useRef<YouTubePlayer | null>(null);
+  const loadedVideoIdRef = useRef('');
+  const serverPositionRef = useRef(0);
+  const isHostRef = useRef(false);
+  const isPlayingRef = useRef(false);
+  const roomActionRef = useRef<(payload: Record<string, unknown>) => Promise<RoomState>>(async () => {
+    throw new Error('음악방 연결을 준비하고 있어요.');
+  });
 
   const applyRoomState = useCallback((state: RoomState) => {
     const revisionChanged = revisionRef.current !== state.playback.revision;
@@ -260,6 +346,10 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     setRoomMembers(state.members);
     setIsHost(state.room.isHost);
     setIsPlaying(state.playback.isPlaying);
+    setPlaybackRevision(state.playback.revision);
+    isHostRef.current = state.room.isHost;
+    isPlayingRef.current = state.playback.isPlaying;
+    serverPositionRef.current = state.playback.position;
     setElapsed((current) => (
       revisionChanged || Math.abs(current - state.playback.position) > 1.5
         ? state.playback.position
@@ -290,6 +380,10 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     socketRef.current?.emit('room:refresh', { reason: String(payload.action || 'state-changed') });
     return data;
   }, [applyRoomState, guestId, nickname, roomCode]);
+
+  useEffect(() => {
+    roomActionRef.current = roomAction;
+  }, [roomAction]);
 
   useEffect(() => {
     if (initialView !== 'room') return;
@@ -398,9 +492,102 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   }, [applyRoomState, guestId, nickname, roomCode, roomReady]);
 
   useEffect(() => {
+    if (!roomReady || !youtubeMountRef.current) return;
+    let cancelled = false;
+    const mount = youtubeMountRef.current;
+
+    void loadYouTubeApi().then((youtube) => {
+      if (cancelled) return;
+      const player = new youtube.Player(mount, {
+        width: '100%',
+        height: '100%',
+        playerVars: {
+          playsinline: 1,
+          controls: 1,
+          rel: 0,
+          origin: window.location.origin,
+        },
+        events: {
+          onReady: ({ target }) => {
+            if (cancelled) {
+              target.destroy();
+              return;
+            }
+            playerRef.current = target;
+            setPlayerReady(true);
+            setPlayerError('');
+          },
+          onStateChange: ({ data, target }) => {
+            const position = Math.max(0, target.getCurrentTime() || 0);
+            if (data === 0 && isHostRef.current) {
+              void roomActionRef.current({ action: 'playback:next' })
+                .then(() => setLiked(false))
+                .catch(() => setToast('재생이 끝났어요. 다음 곡을 신청해 주세요.'));
+              return;
+            }
+            if (!isHostRef.current) return;
+            if (data === 1 && !isPlayingRef.current) {
+              isPlayingRef.current = true;
+              void roomActionRef.current({ action: 'playback:set', playing: true, position })
+                .catch(() => setToast('재생 상태를 동기화하지 못했어요.'));
+            } else if (data === 2 && isPlayingRef.current) {
+              isPlayingRef.current = false;
+              void roomActionRef.current({ action: 'playback:set', playing: false, position })
+                .catch(() => setToast('일시정지 상태를 동기화하지 못했어요.'));
+            }
+          },
+          onError: () => setPlayerError('이 YouTube 영상은 여기서 재생할 수 없어요.'),
+        },
+      });
+      playerRef.current = player;
+    }).catch(() => {
+      if (!cancelled) setPlayerError('YouTube 플레이어를 불러오지 못했어요.');
+    });
+
+    return () => {
+      cancelled = true;
+      setPlayerReady(false);
+      playerRef.current?.destroy();
+      playerRef.current = null;
+      loadedVideoIdRef.current = '';
+    };
+  }, [roomReady]);
+
+  useEffect(() => {
+    const player = playerRef.current;
+    const videoId = currentTrack.videoId;
+    if (!playerReady || !player || !isYouTubeVideoId(videoId)) return;
+
+    const position = Math.max(0, serverPositionRef.current);
+    try {
+      if (loadedVideoIdRef.current !== videoId) {
+        loadedVideoIdRef.current = videoId;
+        if (isPlaying) player.loadVideoById({ videoId, startSeconds: position });
+        else player.cueVideoById({ videoId, startSeconds: position });
+        return;
+      }
+
+      const playerPosition = player.getCurrentTime();
+      if (Number.isFinite(playerPosition) && Math.abs(playerPosition - position) > 2) {
+        player.seekTo(position, true);
+      }
+      if (isPlaying && player.getPlayerState() !== 1) player.playVideo();
+      if (!isPlaying && player.getPlayerState() === 1) player.pauseVideo();
+    } catch {
+      // Player errors are surfaced through the IFrame API's onError event.
+    }
+  }, [currentTrack.videoId, isPlaying, playbackRevision, playerReady]);
+
+  useEffect(() => {
     if (!isPlaying) return;
     const timer = window.setInterval(() => {
-      setElapsed((time) => Math.min(time + 1, currentTrack.duration));
+      setElapsed((time) => {
+        const playerTime = playerRef.current?.getCurrentTime();
+        if (loadedVideoIdRef.current && Number.isFinite(playerTime) && Number(playerTime) >= 0) {
+          return Math.min(Number(playerTime), currentTrack.duration);
+        }
+        return Math.min(time + 1, currentTrack.duration);
+      });
     }, 1000);
     return () => window.clearInterval(timer);
   }, [currentTrack.duration, isPlaying]);
@@ -415,6 +602,8 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     () => Math.min(100, (elapsed / Math.max(1, currentTrack.duration)) * 100),
     [currentTrack.duration, elapsed],
   );
+  const hasPlayableVideo = isYouTubeVideoId(currentTrack.videoId);
+  const canPressPlay = roomReady && (hasPlayableVideo || queue.length > 0);
 
   async function playNext() {
     if (!isHost) {
@@ -423,7 +612,12 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     }
     try {
       const nextTitle = queue[0]?.title;
-      await roomAction({ action: 'playback:next' });
+      const state = await roomAction({ action: 'playback:next' });
+      const nextVideoId = state.currentTrack.videoId;
+      if (playerReady && playerRef.current && isYouTubeVideoId(nextVideoId)) {
+        loadedVideoIdRef.current = nextVideoId;
+        playerRef.current.loadVideoById({ videoId: nextVideoId, startSeconds: 0 });
+      }
       setLiked(false);
       setToast(nextTitle ? `다음 곡 · ${nextTitle}` : '다음 곡을 재생해요');
     } catch (actionError) {
@@ -432,12 +626,42 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   }
 
   async function togglePlayback() {
-    if (!isHost) {
-      setToast('DJ만 재생을 제어할 수 있어요');
+    const hasVideo = isYouTubeVideoId(currentTrack.videoId);
+    if (!hasVideo) {
+      if (queue.length) await playNext();
+      else setToast('먼저 노래를 신청해 주세요');
       return;
     }
+
+    if (!isHost) {
+      if (isPlaying && playerReady && playerRef.current) {
+        playerRef.current.seekTo(elapsed, true);
+        playerRef.current.playVideo();
+        setToast('이 기기에서 재생을 시작했어요');
+      } else {
+        setToast('DJ가 재생하면 여기서 함께 들을 수 있어요');
+      }
+      return;
+    }
+
+    const player = playerReady ? playerRef.current : null;
+    if (isPlaying && player && player.getPlayerState() !== 1) {
+      player.seekTo(elapsed, true);
+      player.playVideo();
+      setToast('이 기기에서 재생을 시작했어요');
+      return;
+    }
+
     try {
-      await roomAction({ action: 'playback:set', playing: !isPlaying, position: elapsed });
+      const nextPlaying = !isPlaying;
+      isPlayingRef.current = nextPlaying;
+      if (nextPlaying) {
+        player?.seekTo(elapsed, true);
+        player?.playVideo();
+      } else {
+        player?.pauseVideo();
+      }
+      await roomAction({ action: 'playback:set', playing: nextPlaying, position: elapsed });
     } catch (actionError) {
       setToast(actionError instanceof Error ? actionError.message : '재생 상태를 바꾸지 못했어요.');
     }
@@ -446,6 +670,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   async function commitPosition(position = elapsed) {
     if (!isHost) return;
     try {
+      playerRef.current?.seekTo(position, true);
       await roomAction({ action: 'playback:set', playing: isPlaying, position });
     } catch (actionError) {
       setToast(actionError instanceof Error ? actionError.message : '재생 위치를 바꾸지 못했어요.');
@@ -453,6 +678,10 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   }
 
   async function skipBack() {
+    if (!isHost) {
+      setToast('DJ만 재생 위치를 바꿀 수 있어요');
+      return;
+    }
     const position = Math.max(0, elapsed - 10);
     setElapsed(position);
     await commitPosition(position);
@@ -560,13 +789,22 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
 
         <div className="content-scroll">
           <section className="now-playing" aria-labelledby="now-playing-title">
-            <div className={`cover-art ${currentTrack.palette}`} aria-label={`${currentTrack.title} 앨범 아트`}>
-              <div className="cover-noise" />
-              <div className="orbit orbit-one" />
-              <div className="orbit orbit-two" />
-              <div className="cover-word">{currentTrack.title.slice(0, 5).toUpperCase()}</div>
-              <div className="youtube-chip"><span>▶</span> YOUTUBE</div>
-              <div className="equalizer" aria-hidden="true"><i /><i /><i /><i /></div>
+            <div className={`cover-art ${currentTrack.palette} ${hasPlayableVideo ? 'has-video' : ''}`} aria-label={`${currentTrack.title} YouTube 플레이어`}>
+              <div className={`youtube-player-shell ${hasPlayableVideo ? 'visible' : ''}`}>
+                <div ref={youtubeMountRef} />
+              </div>
+              {!hasPlayableVideo && (
+                <>
+                  <div className="cover-noise" />
+                  <div className="orbit orbit-one" />
+                  <div className="orbit orbit-two" />
+                  <div className="cover-word">{currentTrack.title.slice(0, 5).toUpperCase()}</div>
+                  <div className="youtube-chip"><span>▶</span> YOUTUBE</div>
+                  <div className="equalizer" aria-hidden="true"><i /><i /><i /><i /></div>
+                </>
+              )}
+              {hasPlayableVideo && !playerReady && <div className="player-message">플레이어 준비 중…</div>}
+              {hasPlayableVideo && playerError && <div className="player-message error">{playerError}</div>}
             </div>
 
             <div className="track-copy">
@@ -595,26 +833,26 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
                 value={elapsed}
                 onChange={(event) => setElapsed(Number(event.target.value))}
                 onPointerUp={(event) => void commitPosition(Number(event.currentTarget.value))}
-                disabled={!isHost || !currentTrack.videoId}
+                disabled={!isHost || !hasPlayableVideo}
                 style={{ '--progress': `${progress}%` } as React.CSSProperties}
               />
               <div className="time-row"><span>{formatTime(elapsed)}</span><span>{formatTime(currentTrack.duration)}</span></div>
             </div>
 
             <div className="player-controls">
-              <button type="button" className="side-control" onClick={() => void skipBack()} disabled={!isHost || !currentTrack.videoId} aria-label="10초 뒤로">
+              <button type="button" className="side-control" onClick={() => void skipBack()} disabled={!hasPlayableVideo} aria-label="10초 뒤로">
                 <span>↶</span><small>10</small>
               </button>
               <button
                 type="button"
                 className="play-button"
                 onClick={() => void togglePlayback()}
-                disabled={!isHost || !currentTrack.videoId}
-                aria-label={isPlaying ? '일시정지' : '재생'}
+                disabled={!canPressPlay}
+                aria-label={!hasPlayableVideo ? '첫 예약곡 재생' : isPlaying ? '일시정지 또는 이 기기에서 재생' : '재생'}
               >
                 {isPlaying ? <span className="pause-icon"><i /><i /></span> : <span className="play-icon">▶</span>}
               </button>
-              <button type="button" className="side-control next-control" onClick={() => void playNext()} disabled={!isHost || !queue.length} aria-label="다음 곡">
+              <button type="button" className="side-control next-control" onClick={() => void playNext()} disabled={!roomReady || !queue.length} aria-label="다음 곡">
                 <span>▶</span><i />
               </button>
             </div>
