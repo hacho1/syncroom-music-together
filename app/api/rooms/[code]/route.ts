@@ -254,7 +254,7 @@ export async function POST(request: Request, { params }: RouteContext) {
           safeText(body.thumbnail, 500) || null,
           nickname || '게스트',
           guestId,
-          Math.max(1, Math.min(7200, Number(body.duration) || 204)),
+          Math.max(1, Math.min(86_400, Number(body.duration) || 204)),
           now,
         ).run();
     } else if (action === 'queue:remove') {
@@ -275,9 +275,14 @@ export async function POST(request: Request, { params }: RouteContext) {
     } else if (action === 'playback:shuffle') {
       if (!(await requireHost(database, code, guestId))) return error('DJ만 셔플을 바꿀 수 있어요.', 403);
       const shuffle = body.shuffle === true;
-      await database.prepare(`UPDATE playback SET shuffle = ?, revision = revision + 1,
-        updated_at = ? WHERE room_code = ?`)
+      await database.prepare('UPDATE playback SET shuffle = ?, updated_at = ? WHERE room_code = ?')
         .bind(shuffle ? 1 : 0, now, code).run();
+    } else if (action === 'playback:duration') {
+      if (!(await requireHost(database, code, guestId))) return error('DJ만 재생 정보를 맞출 수 있어요.', 403);
+      const duration = Math.round(Number(body.duration));
+      if (!Number.isFinite(duration) || duration < 1) return error('영상 길이를 확인하지 못했어요.', 400);
+      await database.prepare('UPDATE playback SET duration = ?, updated_at = ? WHERE room_code = ?')
+        .bind(Math.min(86_400, duration), now, code).run();
     } else if (action === 'playback:next') {
       if (!(await requireHost(database, code, guestId))) return error('DJ만 다음 곡을 재생할 수 있어요.', 403);
       const playbackState = await database.prepare('SELECT shuffle FROM playback WHERE room_code = ?')

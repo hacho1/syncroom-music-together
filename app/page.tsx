@@ -38,6 +38,7 @@ type SearchResult = {
   title: string;
   channelTitle: string;
   thumbnail: string | null;
+  duration: number;
 };
 
 type YouTubePlayer = {
@@ -47,6 +48,7 @@ type YouTubePlayer = {
   pauseVideo(): void;
   seekTo(seconds: number, allowSeekAhead: boolean): void;
   getCurrentTime(): number;
+  getDuration(): number;
   getPlayerState(): number;
   setVolume(volume: number): void;
   mute(): void;
@@ -359,6 +361,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   const isPlayingRef = useRef(false);
   const volumeRef = useRef(75);
   const isMutedRef = useRef(false);
+  const durationSyncRef = useRef('');
   const roomActionRef = useRef<(payload: Record<string, unknown>) => Promise<RoomState>>(async () => {
     throw new Error('음악방 연결을 준비하고 있어요.');
   });
@@ -664,6 +667,34 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   }, [currentTrack.videoId, isPlaying, playbackRevision, playerReady]);
 
   useEffect(() => {
+    if (!playerReady || !isHost || !isYouTubeVideoId(currentTrack.videoId)) return;
+    let cancelled = false;
+    let attempts = 0;
+    const syncDuration = () => {
+      if (cancelled || attempts >= 12) return;
+      attempts += 1;
+      const actualDuration = Math.round(playerRef.current?.getDuration() || 0);
+      if (actualDuration < 1) return;
+      const syncKey = `${currentTrack.videoId}:${actualDuration}`;
+      if (durationSyncRef.current === syncKey || Math.abs(actualDuration - currentTrack.duration) <= 1) {
+        durationSyncRef.current = syncKey;
+        return;
+      }
+      durationSyncRef.current = syncKey;
+      void roomAction({ action: 'playback:duration', duration: actualDuration })
+        .catch(() => { durationSyncRef.current = ''; });
+    };
+    syncDuration();
+    const timer = window.setInterval(syncDuration, 750);
+    const stopTimer = window.setTimeout(() => window.clearInterval(timer), 9_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.clearTimeout(stopTimer);
+    };
+  }, [currentTrack.duration, currentTrack.videoId, isHost, playerReady, roomAction]);
+
+  useEffect(() => {
     if (!isPlaying) return;
     const timer = window.setInterval(() => {
       setElapsed((time) => {
@@ -762,16 +793,6 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     }
   }
 
-  async function skipBack() {
-    if (!isHost) {
-      setToast('DJ만 재생 위치를 바꿀 수 있어요');
-      return;
-    }
-    const position = Math.max(0, elapsed - 10);
-    setElapsed(position);
-    await commitPosition(position);
-  }
-
   async function toggleShuffle() {
     if (!isHost) {
       setToast('DJ만 셔플을 바꿀 수 있어요');
@@ -864,7 +885,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
         title: result.title,
         artist: result.channelTitle,
         thumbnail: result.thumbnail,
-        duration: 204,
+        duration: result.duration || 204,
       });
       setRequest('');
       setSearchResults([]);
@@ -997,9 +1018,6 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
                 aria-pressed={shuffleEnabled}
               >
                 <span>🔀</span>
-              </button>
-              <button type="button" className="side-control" onClick={() => void skipBack()} disabled={!hasPlayableVideo} aria-label="10초 뒤로">
-                <span>↶</span><small>10</small>
               </button>
               <button
                 type="button"

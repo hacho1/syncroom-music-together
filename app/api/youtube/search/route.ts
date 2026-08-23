@@ -43,20 +43,35 @@ function demoResults(query: string) {
       title: query,
       channelTitle: 'YouTube 검색 결과 미리보기',
       thumbnail: null,
+      duration: 204,
     },
     {
       videoId: 'demo-supernova',
       title: 'Supernova',
       channelTitle: 'aespa',
       thumbnail: null,
+      duration: 178,
     },
     {
       videoId: 'demo-ditto',
       title: 'Ditto',
       channelTitle: 'NewJeans',
       thumbnail: null,
+      duration: 185,
     },
   ];
+}
+
+function parseYouTubeDuration(value = '') {
+  const match = value.match(/^P(?:(\d+)D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
+  if (!match) return 204;
+  const [, days, hours, minutes, seconds] = match;
+  return Math.max(1, Math.min(86_400,
+    Number(days || 0) * 86_400
+    + Number(hours || 0) * 3_600
+    + Number(minutes || 0) * 60
+    + Number(seconds || 0),
+  ));
 }
 
 function decodeEntities(value: string) {
@@ -107,7 +122,7 @@ export async function GET(request: Request) {
     }>;
   };
 
-  const results = (data.items || []).flatMap((item) => {
+  const rawResults = (data.items || []).flatMap((item) => {
     const videoId = item.id?.videoId;
     const snippet = item.snippet;
     if (!videoId || !snippet?.title) return [];
@@ -118,6 +133,32 @@ export async function GET(request: Request) {
       thumbnail: snippet.thumbnails?.medium?.url || snippet.thumbnails?.default?.url || null,
     }];
   });
+
+  const durationByVideoId = new Map<string, number>();
+  if (rawResults.length) {
+    const detailsEndpoint = new URL('https://www.googleapis.com/youtube/v3/videos');
+    detailsEndpoint.searchParams.set('part', 'contentDetails');
+    detailsEndpoint.searchParams.set('id', rawResults.map((item) => item.videoId).join(','));
+    const detailsResponse = await fetch(detailsEndpoint, {
+      headers: {
+        Accept: 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+    });
+    if (detailsResponse.ok) {
+      const details = await detailsResponse.json() as {
+        items?: Array<{ id?: string; contentDetails?: { duration?: string } }>;
+      };
+      for (const item of details.items || []) {
+        if (item.id) durationByVideoId.set(item.id, parseYouTubeDuration(item.contentDetails?.duration));
+      }
+    }
+  }
+
+  const results = rawResults.map((item) => ({
+    ...item,
+    duration: durationByVideoId.get(item.videoId) || 204,
+  }));
 
   return Response.json({ demo: false, results });
 }

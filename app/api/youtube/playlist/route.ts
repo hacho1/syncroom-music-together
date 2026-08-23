@@ -62,7 +62,7 @@ function parseYouTubeDuration(value = '') {
   const match = value.match(/^P(?:(\d+)D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
   if (!match) return 204;
   const [, days, hours, minutes, seconds] = match;
-  return Math.max(1, Math.min(7200,
+  return Math.max(1, Math.min(86_400,
     Number(days || 0) * 86_400
     + Number(hours || 0) * 3_600
     + Number(minutes || 0) * 60
