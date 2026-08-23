@@ -1,15 +1,36 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { io, type Socket } from 'socket.io-client';
 
 type Track = {
   id: number;
+  videoId: string;
   title: string;
   artist: string;
   requestedBy: string;
   duration: number;
   palette: string;
-  thumbnail?: string;
+  thumbnail?: string | null;
+};
+
+type RoomMember = {
+  id: string;
+  name: string;
+  role: string;
+  color: string;
+  initials: string;
+  lastSeen: number;
+};
+
+type RoomState = {
+  serverTime: number;
+  room: { code: string; name: string; isHost: boolean };
+  currentTrack: Track;
+  playback: { isPlaying: boolean; position: number; positionUpdatedAt: number; revision: number };
+  queue: Track[];
+  members: RoomMember[];
 };
 
 type SearchResult = {
@@ -28,26 +49,27 @@ function makeRoomCode() {
   return Array.from(values, (value) => alphabet[value % alphabet.length]).join('');
 }
 
+function getOrCreateGuestId() {
+  const saved = window.localStorage.getItem('syncroom:guest-id');
+  if (saved) return saved;
+  const next = window.crypto.randomUUID();
+  window.localStorage.setItem('syncroom:guest-id', next);
+  return next;
+}
+
 function goTo(path: string) {
   window.location.assign(path);
 }
 
 const initialQueue: Track[] = [
-  { id: 2, title: 'Ditto', artist: 'NewJeans', requestedBy: '밤밤', duration: 185, palette: 'violet' },
-  { id: 3, title: '밤편지', artist: '아이유', requestedBy: '혜수', duration: 253, palette: 'amber' },
-  { id: 4, title: 'Drama', artist: 'aespa', requestedBy: '희원', duration: 214, palette: 'blue' },
-];
-
-const members = [
-  { name: '희원', role: 'DJ', color: '#ff3d78', initials: '희' },
-  { name: '밤밤', role: '듣는 중', color: '#8b7cff', initials: '밤' },
-  { name: '혜수', role: '듣는 중', color: '#ffb84d', initials: '혜' },
-  { name: '민지', role: '듣는 중', color: '#42d6aa', initials: '민' },
-  { name: '준', role: '잠시 멈춤', color: '#5d90ff', initials: '준' },
+  { id: 2, videoId: 'demo-ditto', title: 'Ditto', artist: 'NewJeans', requestedBy: '밤밤', duration: 185, palette: 'violet' },
+  { id: 3, videoId: 'demo-night-letter', title: '밤편지', artist: '아이유', requestedBy: '혜수', duration: 253, palette: 'amber' },
+  { id: 4, videoId: 'demo-drama', title: 'Drama', artist: 'aespa', requestedBy: '희원', duration: 214, palette: 'blue' },
 ];
 
 const initialTrack: Track = {
   id: 1,
+  videoId: 'demo-supernova',
   title: 'Supernova',
   artist: 'aespa',
   requestedBy: '희원',
@@ -72,14 +94,6 @@ function HomeScreen() {
   const [mode, setMode] = useState<'create' | 'join'>('create');
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    const savedName = window.localStorage.getItem('syncroom:nickname');
-    if (savedName) {
-      setHostName(savedName);
-      setGuestName(savedName);
-    }
-  }, []);
-
   function createRoom(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const nickname = hostName.trim();
@@ -88,9 +102,10 @@ function HomeScreen() {
       return;
     }
     const code = makeRoomCode();
+    getOrCreateGuestId();
     window.localStorage.setItem('syncroom:nickname', nickname);
     window.localStorage.setItem(`syncroom:room:${code}`, roomName.trim() || '우리들의 음악방');
-    goTo(`/room/${code}?room=${encodeURIComponent(roomName.trim() || '우리들의 음악방')}&name=${encodeURIComponent(nickname)}`);
+    goTo(`/room/${code}?create=1&room=${encodeURIComponent(roomName.trim() || '우리들의 음악방')}&name=${encodeURIComponent(nickname)}`);
   }
 
   function joinRoom(event: FormEvent<HTMLFormElement>) {
@@ -106,6 +121,7 @@ function HomeScreen() {
       return;
     }
     window.localStorage.setItem('syncroom:nickname', nickname);
+    getOrCreateGuestId();
     goTo(`/room/${code}?name=${encodeURIComponent(nickname)}`);
   }
 
@@ -113,8 +129,8 @@ function HomeScreen() {
     <main className="page-stage home-stage">
       <section className="app-shell home-shell" aria-label="SYNCROOM 홈">
         <header className="home-nav">
-          <a href="/" className="brand-lockup"><BrandMark /><b>SYNCROOM</b></a>
-          <a href="/help" className="help-link">도움말 <span>?</span></a>
+          <Link href="/" className="brand-lockup"><BrandMark /><b>SYNCROOM</b></Link>
+          <Link href="/help" className="help-link">도움말 <span>?</span></Link>
         </header>
 
         <div className="home-scroll">
@@ -154,7 +170,7 @@ function HomeScreen() {
                 <button className="primary-start" type="submit"><span>→</span> 음악방 입장하기</button>
               </form>
             )}
-            <p className="privacy-note"><span>⌁</span> 지금은 프로토타입이라 입력 내용은 이 기기에만 저장돼요.</p>
+            <p className="privacy-note"><span>⌁</span> 방과 대기열은 서버에 저장되어 새로고침해도 유지돼요.</p>
           </section>
 
           <section className="feature-strip" aria-label="주요 기능">
@@ -173,8 +189,8 @@ function HelpScreen() {
     <main className="page-stage home-stage">
       <section className="app-shell help-shell" aria-label="SYNCROOM 도움말">
         <header className="home-nav">
-          <a href="/" className="brand-lockup"><BrandMark /><b>SYNCROOM</b></a>
-          <a href="/" className="close-help" aria-label="홈으로 돌아가기">×</a>
+          <Link href="/" className="brand-lockup"><BrandMark /><b>SYNCROOM</b></Link>
+          <Link href="/" className="close-help" aria-label="홈으로 돌아가기">×</Link>
         </header>
         <div className="help-scroll">
           <p className="home-kicker">QUICK GUIDE</p>
@@ -190,17 +206,17 @@ function HelpScreen() {
 
           <section className="help-note">
             <span className="help-note-icon">i</span>
-            <div><h2>현재는 화면 프로토타입이에요</h2><p>방 코드와 검색 흐름은 작동하지만, 여러 기기의 실제 동기화와 방 저장은 서버 연결 후 사용할 수 있어요.</p></div>
+            <div><h2>음악방 DB와 동기화가 연결됐어요</h2><p>방, 참가자, 대기열과 재생 상태가 서버에 저장되고 접속한 사람들의 화면에 자동으로 반영돼요.</p></div>
           </section>
 
           <section className="faq-list">
             <h2>자주 묻는 질문</h2>
             <details><summary>로그인이 꼭 필요한가요?<span>＋</span></summary><p>아니요. 닉네임만 정하면 바로 방을 만들거나 참가할 수 있도록 설계했어요.</p></details>
             <details><summary>음악은 어디서 재생되나요?<span>＋</span></summary><p>YouTube 공식 플레이어를 화면에 표시하고 각 참가자의 브라우저에서 재생하는 구조예요.</p></details>
-            <details><summary>초대 코드는 얼마나 유지되나요?<span>＋</span></summary><p>현재 프로토타입에서는 저장되지 않습니다. 서버와 DB를 연결하면 만료 정책을 정할 수 있어요.</p></details>
+            <details><summary>초대 코드는 얼마나 유지되나요?<span>＋</span></summary><p>현재는 서버에 저장되어 새로고침 후에도 같은 코드로 다시 입장할 수 있어요. 자동 만료 설정은 다음 단계에서 추가할 수 있어요.</p></details>
           </section>
 
-          <a href="/" className="primary-start help-home">홈으로 돌아가기</a>
+          <Link href="/" className="primary-start help-home">홈으로 돌아가기</Link>
         </div>
       </section>
     </main>
@@ -210,9 +226,10 @@ function HelpScreen() {
 export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { initialView?: AppView; initialCode?: string }) {
   const roomCode = initialCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6) || 'HNW824';
   const [currentTrack, setCurrentTrack] = useState(initialTrack);
-  const [queue, setQueue] = useState(initialQueue);
-  const [isPlaying, setIsPlaying] = useState(true);
-  const [elapsed, setElapsed] = useState(133);
+  const [queue, setQueue] = useState<Track[]>(initialQueue);
+  const [roomMembers, setRoomMembers] = useState<RoomMember[]>([]);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   const [liked, setLiked] = useState(false);
   const [activeTab, setActiveTab] = useState<'queue' | 'members'>('queue');
   const [request, setRequest] = useState('');
@@ -220,11 +237,59 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   const [roomName, setRoomName] = useState('함께 듣는 음악방');
   const [nickname, setNickname] = useState('');
   const [guestName, setGuestName] = useState('');
+  const [guestId, setGuestId] = useState('');
   const [joined, setJoined] = useState(false);
+  const [shouldCreate, setShouldCreate] = useState(false);
+  const [roomReady, setRoomReady] = useState(false);
+  const [roomError, setRoomError] = useState('');
+  const [isHost, setIsHost] = useState(false);
+  const [connectionMode, setConnectionMode] = useState<'connecting' | 'socket' | 'polling' | 'offline'>('connecting');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
   const [demoSearch, setDemoSearch] = useState(false);
+  const socketRef = useRef<Socket | null>(null);
+  const revisionRef = useRef(0);
+
+  const applyRoomState = useCallback((state: RoomState) => {
+    const revisionChanged = revisionRef.current !== state.playback.revision;
+    revisionRef.current = state.playback.revision;
+    setRoomName(state.room.name);
+    setCurrentTrack(state.currentTrack);
+    setQueue(state.queue);
+    setRoomMembers(state.members);
+    setIsHost(state.room.isHost);
+    setIsPlaying(state.playback.isPlaying);
+    setElapsed((current) => (
+      revisionChanged || Math.abs(current - state.playback.position) > 1.5
+        ? state.playback.position
+        : current
+    ));
+  }, []);
+
+  const fetchRoomState = useCallback(async () => {
+    if (!guestId) return;
+    const response = await fetch(`/api/rooms/${roomCode}`, {
+      cache: 'no-store',
+      headers: { 'x-syncroom-guest': guestId },
+    });
+    const data = await response.json() as RoomState & { error?: string };
+    if (!response.ok) throw new Error(data.error || '음악방 상태를 불러오지 못했어요.');
+    applyRoomState(data);
+  }, [applyRoomState, guestId, roomCode]);
+
+  const roomAction = useCallback(async (payload: Record<string, unknown>) => {
+    const response = await fetch(`/api/rooms/${roomCode}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...payload, guestId, nickname }),
+    });
+    const data = await response.json() as RoomState & { error?: string };
+    if (!response.ok) throw new Error(data.error || '음악방 요청을 처리하지 못했어요.');
+    applyRoomState(data);
+    socketRef.current?.emit('room:refresh', { reason: String(payload.action || 'state-changed') });
+    return data;
+  }, [applyRoomState, guestId, nickname, roomCode]);
 
   useEffect(() => {
     if (initialView !== 'room') return;
@@ -233,12 +298,104 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     const queryName = params.get('name');
     const savedRoom = window.localStorage.getItem(`syncroom:room:${roomCode}`);
     const savedName = window.localStorage.getItem('syncroom:nickname');
+    // Browser storage is the guest session source and is only available after hydration.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setRoomName(queryRoom?.trim() || savedRoom || '함께 듣는 음악방');
+    setGuestId(getOrCreateGuestId());
+    setShouldCreate(params.get('create') === '1');
     const nextName = queryName?.trim() || savedName || '';
     setNickname(nextName);
     setGuestName(nextName);
     setJoined(Boolean(nextName));
   }, [initialView, roomCode]);
+
+  useEffect(() => {
+    if (initialView !== 'room' || !joined || !guestId || !nickname) return;
+    let cancelled = false;
+    fetch(`/api/rooms/${roomCode}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        action: 'join',
+        guestId,
+        nickname,
+        roomName,
+        create: shouldCreate,
+      }),
+    }).then(async (response) => {
+      const data = await response.json() as RoomState & { error?: string };
+      if (!response.ok) throw new Error(data.error || '음악방에 입장하지 못했어요.');
+      if (cancelled) return;
+      applyRoomState(data);
+      setRoomReady(true);
+      setConnectionMode('polling');
+      window.history.replaceState(null, '', `/room/${roomCode}`);
+    }).catch((joinError) => {
+      if (cancelled) return;
+      setRoomReady(false);
+      setJoined(false);
+      setConnectionMode('offline');
+      setRoomError(joinError instanceof Error ? joinError.message : '음악방에 입장하지 못했어요.');
+    });
+    return () => { cancelled = true; };
+  }, [applyRoomState, guestId, initialView, joined, nickname, roomCode, roomName, shouldCreate]);
+
+  useEffect(() => {
+    if (!roomReady || !guestId) return;
+    let cancelled = false;
+    let socket: Socket | null = null;
+    fetch('/api/realtime/config', { cache: 'no-store' })
+      .then((response) => response.json() as Promise<{ socketUrl?: string | null }>)
+      .then(({ socketUrl }) => {
+        if (cancelled || !socketUrl) {
+          if (!cancelled) setConnectionMode('polling');
+          return;
+        }
+        socket = io(socketUrl, {
+          transports: ['websocket'],
+          auth: { roomCode, guestId, nickname },
+        });
+        socketRef.current = socket;
+        socket.on('connect', () => setConnectionMode('socket'));
+        socket.on('connect_error', () => setConnectionMode('polling'));
+        socket.on('disconnect', () => setConnectionMode('polling'));
+        socket.on('room:refresh', () => { void fetchRoomState().catch(() => undefined); });
+      })
+      .catch(() => setConnectionMode('polling'));
+    return () => {
+      cancelled = true;
+      socket?.disconnect();
+      socketRef.current = null;
+    };
+  }, [fetchRoomState, guestId, nickname, roomCode, roomReady]);
+
+  useEffect(() => {
+    if (!roomReady) return;
+    const interval = connectionMode === 'socket' ? 8_000 : 2_000;
+    const timer = window.setInterval(() => {
+      void fetchRoomState()
+        .then(() => setConnectionMode(socketRef.current?.connected ? 'socket' : 'polling'))
+        .catch(() => setConnectionMode('offline'));
+    }, interval);
+    return () => window.clearInterval(timer);
+  }, [connectionMode, fetchRoomState, roomReady]);
+
+  useEffect(() => {
+    if (!roomReady || !guestId) return;
+    const heartbeat = () => {
+      void fetch(`/api/rooms/${roomCode}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'heartbeat', guestId, nickname }),
+      }).then(async (response) => {
+        if (!response.ok) return;
+        applyRoomState(await response.json() as RoomState);
+      }).catch(() => undefined);
+    };
+    heartbeat();
+    const timer = window.setInterval(heartbeat, 15_000);
+    return () => window.clearInterval(timer);
+  }, [applyRoomState, guestId, nickname, roomCode, roomReady]);
 
   useEffect(() => {
     if (!isPlaying) return;
@@ -255,30 +412,50 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   }, [toast]);
 
   const progress = useMemo(
-    () => Math.min(100, (elapsed / currentTrack.duration) * 100),
+    () => Math.min(100, (elapsed / Math.max(1, currentTrack.duration)) * 100),
     [currentTrack.duration, elapsed],
   );
 
-  const roomMembers = useMemo(() => {
-    if (!nickname || members.some((member) => member.name === nickname)) return members;
-    return [
-      { name: nickname, role: '듣는 중', color: '#42d6aa', initials: nickname.charAt(0) },
-      ...members.slice(0, 4),
-    ];
-  }, [nickname]);
-
-  function playNext() {
-    const next = queue[0];
-    if (!next) {
-      setToast('대기열에 다음 곡이 없어요');
+  async function playNext() {
+    if (!isHost) {
+      setToast('DJ만 다음 곡을 재생할 수 있어요');
       return;
     }
-    setCurrentTrack(next);
-    setQueue((tracks) => tracks.slice(1));
-    setElapsed(0);
-    setLiked(false);
-    setIsPlaying(true);
-    setToast(`다음 곡 · ${next.title}`);
+    try {
+      const nextTitle = queue[0]?.title;
+      await roomAction({ action: 'playback:next' });
+      setLiked(false);
+      setToast(nextTitle ? `다음 곡 · ${nextTitle}` : '다음 곡을 재생해요');
+    } catch (actionError) {
+      setToast(actionError instanceof Error ? actionError.message : '다음 곡을 재생하지 못했어요.');
+    }
+  }
+
+  async function togglePlayback() {
+    if (!isHost) {
+      setToast('DJ만 재생을 제어할 수 있어요');
+      return;
+    }
+    try {
+      await roomAction({ action: 'playback:set', playing: !isPlaying, position: elapsed });
+    } catch (actionError) {
+      setToast(actionError instanceof Error ? actionError.message : '재생 상태를 바꾸지 못했어요.');
+    }
+  }
+
+  async function commitPosition(position = elapsed) {
+    if (!isHost) return;
+    try {
+      await roomAction({ action: 'playback:set', playing: isPlaying, position });
+    } catch (actionError) {
+      setToast(actionError instanceof Error ? actionError.message : '재생 위치를 바꾸지 못했어요.');
+    }
+  }
+
+  async function skipBack() {
+    const position = Math.max(0, elapsed - 10);
+    setElapsed(position);
+    await commitPosition(position);
   }
 
   async function submitRequest(event: FormEvent<HTMLFormElement>) {
@@ -288,7 +465,12 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     setSearching(true);
     setSearchError('');
     try {
-      const response = await fetch(`/api/youtube/search?q=${encodeURIComponent(query)}`);
+      const response = await fetch(`/api/youtube/search?q=${encodeURIComponent(query)}`, {
+        headers: {
+          'x-syncroom-code': roomCode,
+          'x-syncroom-guest': guestId,
+        },
+      });
       const data = await response.json() as { results?: SearchResult[]; demo?: boolean; error?: string };
       if (!response.ok) throw new Error(data.error || '검색 결과를 불러오지 못했어요.');
       setSearchResults(data.results || []);
@@ -301,23 +483,32 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     }
   }
 
-  function reserveSearchResult(result: SearchResult) {
-    setQueue((tracks) => [
-      ...tracks,
-      {
-        id: Date.now(),
+  async function reserveSearchResult(result: SearchResult) {
+    try {
+      await roomAction({
+        action: 'queue:add',
+        videoId: result.videoId,
         title: result.title,
         artist: result.channelTitle,
-        requestedBy: nickname || '나',
+        thumbnail: result.thumbnail,
         duration: 204,
-        palette: 'mint',
-        thumbnail: result.thumbnail || undefined,
-      },
-    ]);
-    setRequest('');
-    setSearchResults([]);
-    setActiveTab('queue');
-    setToast(`예약 완료 · ${result.title}`);
+      });
+      setRequest('');
+      setSearchResults([]);
+      setActiveTab('queue');
+      setToast(`예약 완료 · ${result.title}`);
+    } catch (actionError) {
+      setToast(actionError instanceof Error ? actionError.message : '신청곡을 예약하지 못했어요.');
+    }
+  }
+
+  async function removeQueueItem(track: Track) {
+    try {
+      await roomAction({ action: 'queue:remove', id: track.id });
+      setToast(`대기열에서 삭제 · ${track.title}`);
+    } catch (actionError) {
+      setToast(actionError instanceof Error ? actionError.message : '대기열에서 삭제하지 못했어요.');
+    }
   }
 
   async function shareRoom() {
@@ -336,6 +527,9 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     const name = guestName.trim();
     if (!name) return;
     window.localStorage.setItem('syncroom:nickname', name);
+    setRoomError('');
+    setConnectionMode('connecting');
+    setGuestId(getOrCreateGuestId());
     setNickname(name);
     setJoined(true);
   }
@@ -345,7 +539,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
 
   return (
     <main className="page-stage">
-      <section className="app-shell" aria-label="공동 음악방 프로토타입">
+      <section className="app-shell" aria-label="실시간 공동 음악방">
         <header className="room-header">
           <button className="room-mark home-room-mark" type="button" onClick={() => goTo('/')} aria-label="홈으로 돌아가기"><span /><span /><span /></button>
           <div className="room-heading">
@@ -357,7 +551,9 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
             <h1>{roomName}</h1>
           </div>
           <button className="member-pill" type="button" onClick={() => setActiveTab('members')}>
-            <span className="member-stack" aria-hidden="true"><i>희</i><i>밤</i><i>혜</i></span>
+            <span className="member-stack" aria-hidden="true">
+              {roomMembers.slice(0, 3).map((member) => <i key={member.id}>{member.initials}</i>)}
+            </span>
             <b>{roomMembers.length}</b>
           </button>
         </header>
@@ -395,35 +591,38 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
                 aria-label="재생 위치"
                 type="range"
                 min="0"
-                max={currentTrack.duration}
+                max={Math.max(1, currentTrack.duration)}
                 value={elapsed}
                 onChange={(event) => setElapsed(Number(event.target.value))}
+                onPointerUp={(event) => void commitPosition(Number(event.currentTarget.value))}
+                disabled={!isHost || !currentTrack.videoId}
                 style={{ '--progress': `${progress}%` } as React.CSSProperties}
               />
               <div className="time-row"><span>{formatTime(elapsed)}</span><span>{formatTime(currentTrack.duration)}</span></div>
             </div>
 
             <div className="player-controls">
-              <button type="button" className="side-control" onClick={() => setElapsed((time) => Math.max(0, time - 10))} aria-label="10초 뒤로">
+              <button type="button" className="side-control" onClick={() => void skipBack()} disabled={!isHost || !currentTrack.videoId} aria-label="10초 뒤로">
                 <span>↶</span><small>10</small>
               </button>
               <button
                 type="button"
                 className="play-button"
-                onClick={() => setIsPlaying((value) => !value)}
+                onClick={() => void togglePlayback()}
+                disabled={!isHost || !currentTrack.videoId}
                 aria-label={isPlaying ? '일시정지' : '재생'}
               >
                 {isPlaying ? <span className="pause-icon"><i /><i /></span> : <span className="play-icon">▶</span>}
               </button>
-              <button type="button" className="side-control next-control" onClick={playNext} aria-label="다음 곡">
+              <button type="button" className="side-control next-control" onClick={() => void playNext()} disabled={!isHost || !queue.length} aria-label="다음 곡">
                 <span>▶</span><i />
               </button>
             </div>
 
-            <div className="sync-line">
+            <div className={`sync-line ${connectionMode === 'offline' ? 'offline' : ''}`}>
               <span className="sync-icon">⌁</span>
-              <span>모두 같은 재생 위치에 있어요</span>
-              <strong>SYNCED</strong>
+              <span>{connectionMode === 'socket' ? '모두 같은 재생 위치에 있어요' : connectionMode === 'offline' ? '서버 연결을 다시 확인하고 있어요' : '방 상태를 자동으로 맞추고 있어요'}</span>
+              <strong>{connectionMode === 'socket' ? 'LIVE' : connectionMode === 'offline' ? 'RETRY' : 'SYNCED'}</strong>
             </div>
           </section>
 
@@ -464,7 +663,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
                       type="button"
                       className="more-button"
                       aria-label={`${track.title} 대기열에서 삭제`}
-                      onClick={() => setQueue((tracks) => tracks.filter((item) => item.id !== track.id))}
+                      onClick={() => void removeQueueItem(track)}
                     >
                       ×
                     </button>
@@ -476,7 +675,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
             ) : (
               <div className="member-list" role="tabpanel">
                 {roomMembers.map((member) => (
-                  <article className="member-row" key={member.name}>
+                  <article className="member-row" key={member.id}>
                     <span className="avatar" style={{ background: member.color }}>{member.initials}</span>
                     <div><h3>{member.name}</h3><p>{member.role}</p></div>
                     <span className={`member-status ${member.role === '잠시 멈춤' ? 'away' : ''}`} />
@@ -502,7 +701,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
                       {result.thumbnail ? <img src={result.thumbnail} alt="" /> : <span>▶</span>}
                     </div>
                     <div><h3>{result.title}</h3><p>{result.channelTitle}</p></div>
-                    <button type="button" onClick={() => reserveSearchResult(result)}>예약</button>
+                    <button type="button" onClick={() => void reserveSearchResult(result)} disabled={!roomReady}>예약</button>
                   </article>
                 ))}
               </div>
@@ -518,7 +717,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
             aria-label="신청곡 검색"
             placeholder="노래 제목이나 YouTube 링크"
           />
-          <button type="submit" disabled={!request.trim() || searching}>{searching ? '검색 중' : '검색'}</button>
+          <button type="submit" disabled={!request.trim() || searching || !roomReady}>{searching ? '검색 중' : '검색'}</button>
         </form>
 
         {!joined && (
@@ -529,8 +728,9 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
               <h2 id="guest-gate-title">{roomName}</h2>
               <div className="gate-code"><span>초대 코드</span><strong>{roomCode}</strong></div>
               <label>이 방에서 사용할 닉네임<input autoFocus value={guestName} maxLength={12} onChange={(event) => setGuestName(event.target.value)} placeholder="닉네임 입력" /></label>
+              {roomError && <p className="form-error" role="alert">{roomError}</p>}
               <button className="primary-start" type="submit" disabled={!guestName.trim()}>로그인 없이 입장하기 <span>→</span></button>
-              <a href="/">다른 방 찾기</a>
+              <Link href="/">다른 방 찾기</Link>
             </form>
           </div>
         )}

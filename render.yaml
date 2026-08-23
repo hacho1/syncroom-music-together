@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: syncroom-realtime
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile --prod
+    startCommand: node realtime/server.mjs
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.19.0
+      - key: ALLOWED_ORIGINS
+        value: https://syncroom-music-together.naiski.chatgpt.site

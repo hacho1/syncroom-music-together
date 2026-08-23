@@ -1,3 +1,41 @@
+import { ensureDatabase, getDatabase } from '@/db/runtime';
+
+const searchLimitPerHour = 20;
+
+async function authorizeSearch(request: Request) {
+  const code = (request.headers.get('x-syncroom-code') || '')
+    .toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+  const guestId = (request.headers.get('x-syncroom-guest') || '').trim().slice(0, 80);
+  if (code.length !== 6 || !guestId) {
+    return Response.json({ error: '음악방에 입장한 뒤 검색해 주세요.' }, { status: 401 });
+  }
+  const database = await ensureDatabase(getDatabase());
+  const participant = await database.prepare(
+    'SELECT guest_id FROM participants WHERE room_code = ? AND guest_id = ?',
+  ).bind(code, guestId).first<{ guest_id: string }>();
+  if (!participant) {
+    return Response.json({ error: '음악방에 다시 입장한 뒤 검색해 주세요.' }, { status: 401 });
+  }
+
+  const now = Date.now();
+  const key = `youtube:${code}:${guestId}`;
+  const limit = await database.prepare(
+    'SELECT window_started_at, count FROM api_rate_limits WHERE key = ?',
+  ).bind(key).first<{ window_started_at: number; count: number }>();
+  if (!limit || now - limit.window_started_at >= 60 * 60_000) {
+    await database.prepare(`INSERT INTO api_rate_limits (key, window_started_at, count, updated_at)
+      VALUES (?, ?, 1, ?) ON CONFLICT(key) DO UPDATE SET window_started_at = excluded.window_started_at,
+      count = 1, updated_at = excluded.updated_at`).bind(key, now, now).run();
+    return null;
+  }
+  if (limit.count >= searchLimitPerHour) {
+    return Response.json({ error: '검색을 잠시 많이 사용했어요. 조금 뒤 다시 시도해 주세요.' }, { status: 429 });
+  }
+  await database.prepare('UPDATE api_rate_limits SET count = count + 1, updated_at = ? WHERE key = ?')
+    .bind(now, key).run();
+  return null;
+}
+
 function demoResults(query: string) {
   return [
     {
@@ -33,6 +71,8 @@ function decodeEntities(value: string) {
 export async function GET(request: Request) {
   const query = new URL(request.url).searchParams.get('q')?.trim();
   if (!query) return Response.json({ error: '검색어를 입력해 주세요.' }, { status: 400 });
+  const denied = await authorizeSearch(request);
+  if (denied) return denied;
 
   const apiKey = process.env.YOUTUBE_API_KEY;
   if (!apiKey) {
