@@ -28,7 +28,7 @@ type RoomState = {
   serverTime: number;
   room: { code: string; name: string; isHost: boolean };
   currentTrack: Track;
-  playback: { isPlaying: boolean; position: number; positionUpdatedAt: number; revision: number };
+  playback: { isPlaying: boolean; shuffle: boolean; position: number; positionUpdatedAt: number; revision: number };
   queue: Track[];
   members: RoomMember[];
 };
@@ -48,6 +48,9 @@ type YouTubePlayer = {
   seekTo(seconds: number, allowSeekAhead: boolean): void;
   getCurrentTime(): number;
   getPlayerState(): number;
+  setVolume(volume: number): void;
+  mute(): void;
+  unMute(): void;
   destroy(): void;
 };
 
@@ -303,8 +306,10 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   const [queue, setQueue] = useState<Track[]>(initialQueue);
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>([]);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [shuffleEnabled, setShuffleEnabled] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [liked, setLiked] = useState(false);
+  const [volume, setVolume] = useState(75);
+  const [isMuted, setIsMuted] = useState(false);
   const [activeTab, setActiveTab] = useState<'queue' | 'members'>('queue');
   const [request, setRequest] = useState('');
   const [toast, setToast] = useState('');
@@ -333,6 +338,8 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   const serverPositionRef = useRef(0);
   const isHostRef = useRef(false);
   const isPlayingRef = useRef(false);
+  const volumeRef = useRef(75);
+  const isMutedRef = useRef(false);
   const roomActionRef = useRef<(payload: Record<string, unknown>) => Promise<RoomState>>(async () => {
     throw new Error('음악방 연결을 준비하고 있어요.');
   });
@@ -346,6 +353,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     setRoomMembers(state.members);
     setIsHost(state.room.isHost);
     setIsPlaying(state.playback.isPlaying);
+    setShuffleEnabled(state.playback.shuffle);
     setPlaybackRevision(state.playback.revision);
     isHostRef.current = state.room.isHost;
     isPlayingRef.current = state.playback.isPlaying;
@@ -503,7 +511,10 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
         height: '100%',
         playerVars: {
           playsinline: 1,
-          controls: 1,
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
+          iv_load_policy: 3,
           rel: 0,
           origin: window.location.origin,
         },
@@ -514,6 +525,8 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
               return;
             }
             playerRef.current = target;
+            target.setVolume(volumeRef.current);
+            if (isMutedRef.current) target.mute();
             setPlayerReady(true);
             setPlayerError('');
           },
@@ -521,7 +534,6 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
             const position = Math.max(0, target.getCurrentTime() || 0);
             if (data === 0 && isHostRef.current) {
               void roomActionRef.current({ action: 'playback:next' })
-                .then(() => setLiked(false))
                 .catch(() => setToast('재생이 끝났어요. 다음 곡을 신청해 주세요.'));
               return;
             }
@@ -618,7 +630,6 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
         loadedVideoIdRef.current = nextVideoId;
         playerRef.current.loadVideoById({ videoId: nextVideoId, startSeconds: 0 });
       }
-      setLiked(false);
       setToast(nextTitle ? `다음 곡 · ${nextTitle}` : '다음 곡을 재생해요');
     } catch (actionError) {
       setToast(actionError instanceof Error ? actionError.message : '다음 곡을 재생하지 못했어요.');
@@ -685,6 +696,43 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     const position = Math.max(0, elapsed - 10);
     setElapsed(position);
     await commitPosition(position);
+  }
+
+  async function toggleShuffle() {
+    if (!isHost) {
+      setToast('DJ만 셔플을 바꿀 수 있어요');
+      return;
+    }
+    const nextShuffle = !shuffleEnabled;
+    try {
+      await roomAction({ action: 'playback:shuffle', shuffle: nextShuffle });
+      setToast(nextShuffle ? '셔플을 켰어요' : '셔플을 껐어요');
+    } catch (actionError) {
+      setToast(actionError instanceof Error ? actionError.message : '셔플을 바꾸지 못했어요.');
+    }
+  }
+
+  function changeVolume(nextVolume: number) {
+    const safeVolume = Math.max(0, Math.min(100, nextVolume));
+    const muted = safeVolume === 0;
+    volumeRef.current = safeVolume;
+    isMutedRef.current = muted;
+    setVolume(safeVolume);
+    setIsMuted(muted);
+    playerRef.current?.setVolume(safeVolume);
+    if (muted) playerRef.current?.mute();
+    else playerRef.current?.unMute();
+  }
+
+  function toggleMute() {
+    const nextMuted = !isMutedRef.current;
+    isMutedRef.current = nextMuted;
+    setIsMuted(nextMuted);
+    if (nextMuted) playerRef.current?.mute();
+    else {
+      playerRef.current?.setVolume(volumeRef.current);
+      playerRef.current?.unMute();
+    }
   }
 
   async function submitRequest(event: FormEvent<HTMLFormElement>) {
@@ -813,15 +861,19 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
                 <h2>{currentTrack.title}</h2>
                 <p>{currentTrack.artist} <span>·</span> 신청 {currentTrack.requestedBy}</p>
               </div>
-              <button
-                type="button"
-                className={`heart-button ${liked ? 'liked' : ''}`}
-                onClick={() => setLiked((value) => !value)}
-                aria-label={liked ? '좋아요 취소' : '좋아요'}
-                aria-pressed={liked}
-              >
-                {liked ? '♥' : '♡'}
-              </button>
+              <div className="volume-control" aria-label="이 기기 음량">
+                <button type="button" className="volume-button" onClick={toggleMute} aria-label={isMuted ? '음소거 해제' : '음소거'} aria-pressed={isMuted}>
+                  {isMuted || volume === 0 ? '🔇' : volume < 50 ? '🔉' : '🔊'}
+                </button>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={volume}
+                  onChange={(event) => changeVolume(Number(event.target.value))}
+                  aria-label="음량"
+                />
+              </div>
             </div>
 
             <div className="progress-wrap">
@@ -840,6 +892,16 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
             </div>
 
             <div className="player-controls">
+              <button
+                type="button"
+                className={`side-control shuffle-control ${shuffleEnabled ? 'active' : ''}`}
+                onClick={() => void toggleShuffle()}
+                disabled={!roomReady}
+                aria-label={shuffleEnabled ? '셔플 끄기' : '셔플 켜기'}
+                aria-pressed={shuffleEnabled}
+              >
+                <span>🔀</span>
+              </button>
               <button type="button" className="side-control" onClick={() => void skipBack()} disabled={!hasPlayableVideo} aria-label="10초 뒤로">
                 <span>↶</span><small>10</small>
               </button>

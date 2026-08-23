@@ -45,6 +45,7 @@ export const playback = sqliteTable('playback', {
   requestedBy: text('requested_by').notNull(),
   duration: integer('duration').notNull().default(178),
   playing: integer('playing', { mode: 'boolean' }).notNull().default(false),
+  shuffle: integer('shuffle', { mode: 'boolean' }).notNull().default(false),
   position: real('position').notNull().default(0),
   positionUpdatedAt: integer('position_updated_at').notNull(),
   revision: integer('revision').notNull().default(1),

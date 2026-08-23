@@ -19,6 +19,7 @@ type PlaybackRow = {
   requested_by: string;
   duration: number;
   playing: number;
+  shuffle: number;
   position: number;
   position_updated_at: number;
   revision: number;
@@ -135,6 +136,7 @@ async function readRoomState(database: D1Database, code: string, viewerGuestId =
     },
     playback: {
       isPlaying: Boolean(playback.playing),
+      shuffle: Boolean(playback.shuffle),
       position,
       positionUpdatedAt: playback.position_updated_at,
       revision: playback.revision,
@@ -263,10 +265,20 @@ export async function POST(request: Request, { params }: RouteContext) {
       await database.prepare(`UPDATE playback SET playing = ?, position = ?, position_updated_at = ?,
         revision = revision + 1, updated_at = ? WHERE room_code = ?`)
         .bind(playing ? 1 : 0, position, now, now, code).run();
+    } else if (action === 'playback:shuffle') {
+      if (!(await requireHost(database, code, guestId))) return error('DJ만 셔플을 바꿀 수 있어요.', 403);
+      const shuffle = body.shuffle === true;
+      await database.prepare(`UPDATE playback SET shuffle = ?, revision = revision + 1,
+        updated_at = ? WHERE room_code = ?`)
+        .bind(shuffle ? 1 : 0, now, code).run();
     } else if (action === 'playback:next') {
       if (!(await requireHost(database, code, guestId))) return error('DJ만 다음 곡을 재생할 수 있어요.', 403);
-      const next = await database.prepare('SELECT * FROM queue_items WHERE room_code = ? ORDER BY id ASC LIMIT 1')
-        .bind(code).first<QueueRow>();
+      const playbackState = await database.prepare('SELECT shuffle FROM playback WHERE room_code = ?')
+        .bind(code).first<{ shuffle: number }>();
+      const nextQuery = playbackState?.shuffle
+        ? 'SELECT * FROM queue_items WHERE room_code = ? ORDER BY RANDOM() LIMIT 1'
+        : 'SELECT * FROM queue_items WHERE room_code = ? ORDER BY id ASC LIMIT 1';
+      const next = await database.prepare(nextQuery).bind(code).first<QueueRow>();
       if (!next) return error('대기열에 다음 곡이 없어요.', 409);
       await database.batch([
         database.prepare(`UPDATE playback SET video_id = ?, title = ?, artist = ?, thumbnail = ?, requested_by = ?,

@@ -1,0 +1,1 @@
+ALTER TABLE `playback` ADD `shuffle` integer DEFAULT false NOT NULL;

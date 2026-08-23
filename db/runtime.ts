@@ -28,6 +28,7 @@ const schemaStatements = [
     requested_by TEXT NOT NULL,
     duration INTEGER DEFAULT 178 NOT NULL,
     playing INTEGER DEFAULT 0 NOT NULL,
+    shuffle INTEGER DEFAULT 0 NOT NULL,
     position REAL DEFAULT 0 NOT NULL,
     position_updated_at INTEGER NOT NULL,
     revision INTEGER DEFAULT 1 NOT NULL,
