@@ -5,6 +5,8 @@ const schemaStatements = [
     code TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
     host_guest_id TEXT NOT NULL,
+    visibility TEXT DEFAULT 'private' NOT NULL,
+    max_participants INTEGER DEFAULT 50 NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`,
@@ -54,6 +56,7 @@ const schemaStatements = [
     count INTEGER DEFAULT 1 NOT NULL,
     updated_at INTEGER NOT NULL
   )`,
+  'CREATE INDEX IF NOT EXISTS idx_rooms_visibility_updated ON rooms(visibility, updated_at)',
   'CREATE INDEX IF NOT EXISTS idx_participants_room_seen ON participants(room_code, last_seen)',
   'CREATE INDEX IF NOT EXISTS idx_queue_items_room_id ON queue_items(room_code, id)',
 ];

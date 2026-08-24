@@ -4,9 +4,13 @@ export const rooms = sqliteTable('rooms', {
   code: text('code').primaryKey(),
   name: text('name').notNull(),
   hostGuestId: text('host_guest_id').notNull(),
+  visibility: text('visibility', { enum: ['private', 'public'] }).notNull().default('private'),
+  maxParticipants: integer('max_participants').notNull().default(50),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
-});
+}, (table) => [
+  index('idx_rooms_visibility_updated').on(table.visibility, table.updatedAt),
+]);
 
 export const participants = sqliteTable('participants', {
   roomCode: text('room_code').notNull().references(() => rooms.code, { onDelete: 'cascade' }),

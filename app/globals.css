@@ -587,6 +587,89 @@ button:focus-visible, input:focus-visible { outline: 2px solid rgba(255, 75, 119
 .feature-strip h2 { margin: 0; font-size: 10px; }
 .feature-strip p { margin: 2px 0 0; color: #62666e; font-size: 8px; }
 
+.public-room-cta {
+  display: grid;
+  grid-template-columns: 39px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(139, 124, 255, .22);
+  border-radius: 15px;
+  background: linear-gradient(135deg, rgba(139,124,255,.12), rgba(255,49,95,.07));
+  color: white;
+  text-decoration: none;
+  box-shadow: 0 13px 34px rgba(0,0,0,.22);
+}
+.public-room-cta-icon { position: relative; display: flex; width: 38px; height: 38px; align-items: center; justify-content: center; }
+.public-room-cta-icon i { position: absolute; width: 21px; height: 21px; border: 2px solid #0c0d10; border-radius: 50%; background: #8b7cff; }
+.public-room-cta-icon i:nth-child(1) { left: 1px; background: #ff3d78; }
+.public-room-cta-icon i:nth-child(2) { right: 1px; background: #ffb84d; }
+.public-room-cta-icon i:nth-child(3) { z-index: 2; top: 0; background: #8b7cff; }
+.public-room-cta > span:nth-child(2) { display: grid; gap: 3px; min-width: 0; }
+.public-room-cta strong { font-size: 10px; }
+.public-room-cta small { overflow: hidden; color: #898594; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.public-room-cta > b { color: #9a92dc; font-size: 15px; font-weight: 500; }
+
+.visibility-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 0; padding: 0; border: 0; }
+.visibility-picker legend { grid-column: 1 / -1; margin-bottom: 7px; padding: 0; color: #8c9098; font-size: 9px; font-weight: 700; }
+.visibility-picker button { display: grid; grid-template-columns: 22px 1fr; grid-template-rows: auto auto; min-width: 0; padding: 9px 10px; border: 1px solid #2b2e34; border-radius: 11px; background: #101216; color: #737781; cursor: pointer; text-align: left; }
+.visibility-picker button.active { border-color: rgba(255,49,95,.52); background: rgba(255,49,95,.075); color: white; box-shadow: 0 0 0 2px rgba(255,49,95,.035); }
+.visibility-picker button > span { grid-row: 1 / 3; align-self: center; color: #676b74; font-size: 14px; }
+.visibility-picker button.active > span { color: var(--accent); }
+.visibility-picker button b { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.visibility-picker button small { overflow: hidden; margin-top: 2px; color: #5f636c; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.visibility-picker button.active small { color: #9a7e86; }
+
+/* Public room directory */
+.public-shell {
+  background:
+    radial-gradient(circle at 85% 4%, rgba(139,124,255,.14), transparent 18rem),
+    radial-gradient(circle at 8% 45%, rgba(255,49,95,.08), transparent 17rem),
+    #08090b;
+}
+.public-nav { min-height: 64px; }
+.public-rooms-scroll { flex: 1; overflow-y: auto; padding: 13px 18px 92px; scrollbar-width: none; }
+.public-rooms-scroll::-webkit-scrollbar { display: none; }
+.public-rooms-hero { padding: 11px 2px 23px; }
+.public-live-badge { display: inline-flex; align-items: center; gap: 6px; color: #9e98c0; font-size: 7px; font-weight: 850; letter-spacing: .13em; }
+.public-live-badge span { width: 6px; height: 6px; border-radius: 50%; background: #8b7cff; box-shadow: 0 0 8px rgba(139,124,255,.9); animation: public-live-pulse 1.5s ease-in-out infinite; }
+@keyframes public-live-pulse { 50% { opacity: .4; transform: scale(.75); } }
+.public-rooms-hero h1 { margin: 10px 0 0; color: #fafafa; font-size: 33px; font-weight: 850; letter-spacing: -.06em; line-height: 1.03; }
+.public-rooms-hero h1 em { color: #9a8fff; font-style: normal; }
+.public-rooms-hero p { margin: 12px 0 0; color: #7b7f88; font-size: 10px; line-height: 1.65; }
+.public-list-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.public-list-heading h2 { margin: 0; font-size: 12px; }
+.public-list-heading h2 span { display: inline-grid; min-width: 20px; height: 20px; margin-left: 5px; place-items: center; border-radius: 999px; background: rgba(139,124,255,.1); color: #a49aff; font-size: 8px; }
+.public-list-heading button { width: 29px; height: 29px; border: 1px solid #292c32; border-radius: 9px; background: #121418; color: #777b84; cursor: pointer; font-size: 14px; }
+.public-list-heading button:disabled { opacity: .45; }
+.public-room-list { display: grid; gap: 10px; }
+.public-room-card { display: grid; grid-template-columns: 80px minmax(0,1fr); gap: 11px; padding: 11px; border: 1px solid rgba(255,255,255,.075); border-radius: 16px; background: linear-gradient(145deg, rgba(23,25,30,.96), rgba(14,16,19,.96)); box-shadow: 0 14px 36px rgba(0,0,0,.19); }
+.public-room-cover { position: relative; display: grid; width: 80px; height: 80px; overflow: hidden; place-items: center; border-radius: 12px; background: linear-gradient(145deg,#35122b,#101117); color: #827b8a; font-size: 21px; }
+.public-room-cover img { width: 100%; height: 100%; object-fit: cover; }
+.public-room-cover::after { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 48%, rgba(0,0,0,.64)); content: ''; }
+.public-room-cover i { position: absolute; right: 6px; bottom: 6px; z-index: 1; padding: 3px 5px; border-radius: 999px; background: rgba(21,23,28,.84); color: #858992; font-size: 6px; font-style: normal; font-weight: 750; }
+.public-room-cover i.playing { background: rgba(255,49,95,.88); color: white; }
+.public-room-copy { min-width: 0; padding: 2px 0 0; }
+.public-room-copy > p { margin: 0 0 4px; color: #746e90; font-size: 6px; font-weight: 850; letter-spacing: .1em; }
+.public-room-copy h2 { overflow: hidden; margin: 0 0 8px; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.public-room-copy h3 { overflow: hidden; margin: 0; color: #b8bac0; font-size: 9px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.public-room-copy small { display: block; overflow: hidden; margin-top: 3px; color: #62666f; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.public-room-actions { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding-top: 2px; }
+.public-room-actions span { color: #55cba4; font-size: 8px; font-weight: 750; }
+.public-room-actions span.full { color: #c27c8c; }
+.public-room-actions a, .public-room-actions b { min-width: 76px; padding: 8px 11px; border-radius: 9px; background: rgba(139,124,255,.13); color: #b4adff; font-size: 8px; font-weight: 800; text-align: center; text-decoration: none; }
+.public-room-actions b { background: #202227; color: #666a72; }
+.public-room-empty { display: grid; min-height: 235px; place-items: center; align-content: center; gap: 8px; padding: 22px; border: 1px dashed #282b31; border-radius: 17px; color: #5c6068; text-align: center; }
+.public-room-empty > span { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 50%; background: #15171b; color: #8f86dc; font-size: 20px; }
+.public-room-empty h2 { margin: 4px 0 0; color: #c9cbd0; font-size: 12px; }
+.public-room-empty p { max-width: 235px; margin: 0; color: #676b74; font-size: 9px; line-height: 1.55; }
+.public-room-empty a, .public-room-empty button { margin-top: 6px; padding: 9px 13px; border: 0; border-radius: 9px; background: rgba(139,124,255,.13); color: #aaa1ff; cursor: pointer; font-size: 8px; font-weight: 800; text-decoration: none; }
+.public-create-bar { position: absolute; right: 15px; bottom: max(13px, env(safe-area-inset-bottom)); left: 15px; z-index: 5; display: grid; grid-template-columns: 27px 1fr auto; align-items: center; gap: 7px; min-height: 52px; padding: 8px 13px; border: 1px solid rgba(255,255,255,.09); border-radius: 14px; background: rgba(21,23,28,.96); color: white; text-decoration: none; box-shadow: 0 14px 40px rgba(0,0,0,.48); backdrop-filter: blur(18px); }
+.public-create-bar > span { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 8px; background: var(--accent); font-size: 15px; }
+.public-create-bar b { font-size: 10px; }
+.public-create-bar small { color: #676b74; font-size: 7px; }
+
 /* Help */
 .close-help { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid #30333a; border-radius: 9px; color: #a5a8af; font-size: 18px; text-decoration: none; }
 .help-scroll { padding-top: 24px; }

@@ -26,11 +26,31 @@ type RoomMember = {
 
 type RoomState = {
   serverTime: number;
-  room: { code: string; name: string; isHost: boolean };
+  room: {
+    code: string;
+    name: string;
+    isHost: boolean;
+    visibility: 'private' | 'public';
+    maxParticipants: number;
+  };
   currentTrack: Track;
   playback: { isPlaying: boolean; shuffle: boolean; position: number; positionUpdatedAt: number; revision: number };
   queue: Track[];
   members: RoomMember[];
+};
+
+type PublicRoom = {
+  code: string;
+  name: string;
+  participantCount: number;
+  maxParticipants: number;
+  currentTrack: {
+    videoId: string;
+    title: string;
+    artist: string;
+    thumbnail: string | null;
+  };
+  isPlaying: boolean;
 };
 
 type SearchResult = {
@@ -78,7 +98,7 @@ declare global {
   }
 }
 
-type AppView = 'home' | 'room' | 'help';
+type AppView = 'home' | 'room' | 'help' | 'public';
 
 let youtubeApiPromise: Promise<YouTubeNamespace> | null = null;
 
@@ -225,6 +245,7 @@ function HomeScreen() {
   const [joinCode, setJoinCode] = useState('');
   const [guestName, setGuestName] = useState('');
   const [mode, setMode] = useState<'create' | 'join'>('create');
+  const [visibility, setVisibility] = useState<'private' | 'public'>('private');
   const [error, setError] = useState('');
 
   function createRoom(event: FormEvent<HTMLFormElement>) {
@@ -238,7 +259,7 @@ function HomeScreen() {
     getOrCreateGuestId();
     window.localStorage.setItem('syncroom:nickname', nickname);
     window.localStorage.setItem(`syncroom:room:${code}`, roomName.trim() || '우리들의 음악방');
-    goTo(`/room/${code}?create=1&room=${encodeURIComponent(roomName.trim() || '우리들의 음악방')}&name=${encodeURIComponent(nickname)}`);
+    goTo(`/room/${code}?create=1&room=${encodeURIComponent(roomName.trim() || '우리들의 음악방')}&name=${encodeURIComponent(nickname)}&visibility=${visibility}`);
   }
 
   function joinRoom(event: FormEvent<HTMLFormElement>) {
@@ -282,6 +303,12 @@ function HomeScreen() {
             </div>
           </section>
 
+          <Link href="/public" className="public-room-cta">
+            <span className="public-room-cta-icon" aria-hidden="true"><i /><i /><i /></span>
+            <span><strong>다른 사람과 함께 들으러 가기</strong><small>지금 열려 있는 공개 음악방 둘러보기</small></span>
+            <b aria-hidden="true">→</b>
+          </Link>
+
           <section className="start-card">
             <div className="start-tabs" role="tablist" aria-label="방 시작 방법">
               <button type="button" role="tab" aria-selected={mode === 'create'} className={mode === 'create' ? 'active' : ''} onClick={() => { setMode('create'); setError(''); }}>새 방 만들기</button>
@@ -292,6 +319,15 @@ function HomeScreen() {
               <form className="start-form" onSubmit={createRoom}>
                 <label>방 이름<input value={roomName} maxLength={24} onChange={(event) => setRoomName(event.target.value)} placeholder="우리들의 음악방" /></label>
                 <label>내 닉네임<input value={hostName} maxLength={12} onChange={(event) => setHostName(event.target.value)} placeholder="어떻게 불러드릴까요?" /></label>
+                <fieldset className="visibility-picker">
+                  <legend>공개 범위</legend>
+                  <button type="button" className={visibility === 'private' ? 'active' : ''} onClick={() => setVisibility('private')} aria-pressed={visibility === 'private'}>
+                    <span>⌁</span><b>비밀방</b><small>초대받은 사람만</small>
+                  </button>
+                  <button type="button" className={visibility === 'public' ? 'active' : ''} onClick={() => setVisibility('public')} aria-pressed={visibility === 'public'}>
+                    <span>◉</span><b>공개방</b><small>누구나 · 최대 12명</small>
+                  </button>
+                </fieldset>
                 {error && <p className="form-error" role="alert">{error}</p>}
                 <button className="primary-start" type="submit"><span>＋</span> 음악방 만들기</button>
               </form>
@@ -312,6 +348,93 @@ function HomeScreen() {
             <article><span>03</span><i>↗</i><div><h2>코드로 초대</h2><p>6자리로 간단히</p></div></article>
           </section>
         </div>
+      </section>
+    </main>
+  );
+}
+
+function PublicRoomsScreen() {
+  const [rooms, setRooms] = useState<PublicRoom[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  const loadRooms = useCallback(async () => {
+    try {
+      const response = await fetch('/api/rooms/public', { cache: 'no-store' });
+      const data = await response.json() as { rooms?: PublicRoom[]; error?: string };
+      if (!response.ok) throw new Error(data.error || '공개방 목록을 불러오지 못했어요.');
+      setRooms(data.rooms || []);
+      setLoadError('');
+    } catch (requestError) {
+      setLoadError(requestError instanceof Error ? requestError.message : '공개방 목록을 불러오지 못했어요.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const initialTimer = window.setTimeout(() => void loadRooms(), 0);
+    const timer = window.setInterval(() => void loadRooms(), 10_000);
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(timer);
+    };
+  }, [loadRooms]);
+
+  return (
+    <main className="page-stage home-stage">
+      <section className="app-shell public-shell" aria-label="공개 음악방 목록">
+        <header className="home-nav public-nav">
+          <Link href="/" className="brand-lockup"><BrandMark /><b>SYNCROOM</b></Link>
+          <Link href="/" className="close-help" aria-label="홈으로 돌아가기">×</Link>
+        </header>
+
+        <div className="public-rooms-scroll">
+          <section className="public-rooms-hero">
+            <div className="public-live-badge"><span /> LIVE TOGETHER</div>
+            <h1>지금 함께<br /><em>듣고 있는 방</em></h1>
+            <p>마음에 드는 방에 들어가 닉네임만 정하면 돼요.<br />공개방은 최대 12명까지 함께 들을 수 있어요.</p>
+          </section>
+
+          <div className="public-list-heading">
+            <h2>열려 있는 음악방 <span>{rooms.length}</span></h2>
+            <button type="button" onClick={() => void loadRooms()} disabled={loading} aria-label="공개방 목록 새로고침">↻</button>
+          </div>
+
+          {loading && rooms.length === 0 ? (
+            <div className="public-room-empty"><div className="invite-loader"><span /><span /><span /></div><p>함께 들을 방을 찾고 있어요</p></div>
+          ) : loadError && rooms.length === 0 ? (
+            <div className="public-room-empty"><span>!</span><p>{loadError}</p><button type="button" onClick={() => void loadRooms()}>다시 불러오기</button></div>
+          ) : rooms.length === 0 ? (
+            <div className="public-room-empty"><span>♫</span><h2>아직 열린 공개방이 없어요</h2><p>첫 공개방을 열고 같이 들을 사람을 기다려 보세요.</p><Link href="/">공개방 만들기</Link></div>
+          ) : (
+            <div className="public-room-list">
+              {rooms.map((room) => {
+                const isFull = room.participantCount >= room.maxParticipants;
+                return (
+                  <article className="public-room-card" key={room.code}>
+                    <div className="public-room-cover">
+                      {room.currentTrack.thumbnail ? <img src={room.currentTrack.thumbnail} alt="" /> : <span>♫</span>}
+                      <i className={room.isPlaying ? 'playing' : ''}>{room.isPlaying ? '재생 중' : '대기 중'}</i>
+                    </div>
+                    <div className="public-room-copy">
+                      <p>PUBLIC ROOM · {room.code}</p>
+                      <h2>{room.name}</h2>
+                      <h3>{room.currentTrack.title}</h3>
+                      <small>{room.currentTrack.artist}</small>
+                    </div>
+                    <div className="public-room-actions">
+                      <span className={isFull ? 'full' : ''}>● {room.participantCount}/{room.maxParticipants}</span>
+                      {isFull ? <b>입장 마감</b> : <Link href={`/room/${room.code}`}>참가하기</Link>}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <Link href="/" className="public-create-bar"><span>＋</span><b>내 음악방 만들기</b><small>비밀방 또는 공개방</small></Link>
       </section>
     </main>
   );
@@ -375,6 +498,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   const [guestId, setGuestId] = useState('');
   const [joined, setJoined] = useState(false);
   const [shouldCreate, setShouldCreate] = useState(false);
+  const [createVisibility, setCreateVisibility] = useState<'private' | 'public'>('private');
   const [roomReady, setRoomReady] = useState(false);
   const [roomError, setRoomError] = useState('');
   const [checkingInvite, setCheckingInvite] = useState(initialView === 'room');
@@ -480,11 +604,13 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     const savedName = window.localStorage.getItem('syncroom:nickname');
     const nextGuestId = getOrCreateGuestId();
     const createRoom = params.get('create') === '1';
+    const visibility = params.get('visibility') === 'public' ? 'public' : 'private';
     // Browser storage is the guest session source and is only available after hydration.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setRoomName(queryRoom?.trim() || savedRoom || '함께 듣는 음악방');
     setGuestId(nextGuestId);
     setShouldCreate(createRoom);
+    setCreateVisibility(visibility);
     const nextName = queryName?.trim() || savedName || '';
     setNickname(nextName);
     setGuestName(nextName);
@@ -532,6 +658,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
         nickname,
         roomName,
         create: shouldCreate,
+        visibility: createVisibility,
       }),
     }).then(async (response) => {
       const data = await response.json() as RoomState & { error?: string; code?: string };
@@ -553,7 +680,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
       setRoomError(joinError instanceof Error ? joinError.message : '음악방에 입장하지 못했어요.');
     });
     return () => { cancelled = true; };
-  }, [applyRoomState, guestId, initialView, joined, nickname, roomCode, roomName, shouldCreate]);
+  }, [applyRoomState, createVisibility, guestId, initialView, joined, nickname, roomCode, roomName, shouldCreate]);
 
   useEffect(() => {
     if (!roomReady || !guestId) return;
@@ -967,6 +1094,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
 
   if (initialView === 'home') return <HomeScreen />;
   if (initialView === 'help') return <HelpScreen />;
+  if (initialView === 'public') return <PublicRoomsScreen />;
 
   return (
     <main className="page-stage">

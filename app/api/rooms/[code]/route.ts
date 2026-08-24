@@ -6,6 +6,8 @@ type RoomRow = {
   code: string;
   name: string;
   host_guest_id: string;
+  visibility: 'private' | 'public';
+  max_participants: number;
   created_at: number;
   updated_at: number;
 };
@@ -206,6 +208,8 @@ async function readRoomState(database: D1Database, code: string, viewerGuestId =
       code: room.code,
       name: room.name,
       isHost: room.host_guest_id === viewerGuestId,
+      visibility: room.visibility,
+      maxParticipants: room.max_participants,
     },
     currentTrack: {
       id: 0,
@@ -272,9 +276,13 @@ export async function POST(request: Request, { params }: RouteContext) {
     if (!room && !create) return expiredRoom();
     if (!room) {
       const name = safeText(body.roomName, 24) || '함께 듣는 음악방';
+      const visibility = body.visibility === 'public' ? 'public' : 'private';
+      const maxParticipants = visibility === 'public' ? 12 : 50;
       await database.batch([
-        database.prepare('INSERT INTO rooms (code, name, host_guest_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
-          .bind(code, name, guestId, now, now),
+        database.prepare(`INSERT INTO rooms (
+          code, name, host_guest_id, visibility, max_participants, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+          .bind(code, name, guestId, visibility, maxParticipants, now, now),
         database.prepare(`INSERT INTO playback (
           room_code, video_id, title, artist, thumbnail, requested_by, duration,
           playing, position, position_updated_at, revision, updated_at
@@ -285,6 +293,7 @@ export async function POST(request: Request, { params }: RouteContext) {
     } else if (create && room.host_guest_id !== guestId) {
       return error('방 코드가 겹쳤어요. 홈에서 새 방을 다시 만들어 주세요.', 409);
     }
+    if (!room) return error('음악방을 만들지 못했어요. 잠시 후 다시 시도해 주세요.', 500);
     const existingParticipant = await database.prepare(
       'SELECT guest_id FROM participants WHERE room_code = ? AND guest_id = ?',
     ).bind(code, guestId).first<{ guest_id: string }>();
@@ -292,7 +301,9 @@ export async function POST(request: Request, { params }: RouteContext) {
       const participantCount = await database.prepare(
         'SELECT COUNT(*) AS count FROM participants WHERE room_code = ? AND last_seen >= ?',
       ).bind(code, now - 60_000).first<{ count: number }>();
-      if ((participantCount?.count || 0) >= 50) return error('이 음악방은 참가자가 가득 찼어요.', 429);
+      if ((participantCount?.count || 0) >= room.max_participants) {
+        return error(`이 음악방은 ${room.max_participants}명이 모두 참가 중이에요.`, 429);
+      }
     }
     const role = room?.host_guest_id === guestId ? 'host' : 'guest';
     await database.prepare(`INSERT INTO participants (
