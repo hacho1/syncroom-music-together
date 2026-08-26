@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+/* eslint-disable @next/next/no-html-link-for-pages -- Vinext client navigation is broken in production; use full document navigation. */
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 
@@ -283,8 +283,8 @@ function HomeScreen() {
     <main className="page-stage home-stage">
       <section className="app-shell home-shell" aria-label="SYNCROOM 홈">
         <header className="home-nav">
-          <Link href="/" className="brand-lockup"><BrandMark /><b>SYNCROOM</b></Link>
-          <Link href="/help" className="help-link">도움말 <span>?</span></Link>
+          <a href="/" className="brand-lockup"><BrandMark /><b>SYNCROOM</b></a>
+          <a href="/help" className="help-link">도움말 <span>?</span></a>
         </header>
 
         <div className="home-scroll">
@@ -303,11 +303,11 @@ function HomeScreen() {
             </div>
           </section>
 
-          <Link href="/public" className="public-room-cta">
+          <a href="/public" className="public-room-cta">
             <span className="public-room-cta-icon" aria-hidden="true"><i /><i /><i /></span>
             <span><strong>다른 사람과 함께 들으러 가기</strong><small>지금 열려 있는 공개 음악방 둘러보기</small></span>
             <b aria-hidden="true">→</b>
-          </Link>
+          </a>
 
           <section className="start-card">
             <div className="start-tabs" role="tablist" aria-label="방 시작 방법">
@@ -385,8 +385,8 @@ function PublicRoomsScreen() {
     <main className="page-stage home-stage">
       <section className="app-shell public-shell" aria-label="공개 음악방 목록">
         <header className="home-nav public-nav">
-          <Link href="/" className="brand-lockup"><BrandMark /><b>SYNCROOM</b></Link>
-          <Link href="/" className="close-help" aria-label="홈으로 돌아가기">×</Link>
+          <a href="/" className="brand-lockup"><BrandMark /><b>SYNCROOM</b></a>
+          <a href="/" className="close-help" aria-label="홈으로 돌아가기">×</a>
         </header>
 
         <div className="public-rooms-scroll">
@@ -406,7 +406,7 @@ function PublicRoomsScreen() {
           ) : loadError && rooms.length === 0 ? (
             <div className="public-room-empty"><span>!</span><p>{loadError}</p><button type="button" onClick={() => void loadRooms()}>다시 불러오기</button></div>
           ) : rooms.length === 0 ? (
-            <div className="public-room-empty"><span>♫</span><h2>아직 열린 공개방이 없어요</h2><p>첫 공개방을 열고 같이 들을 사람을 기다려 보세요.</p><Link href="/">공개방 만들기</Link></div>
+            <div className="public-room-empty"><span>♫</span><h2>아직 열린 공개방이 없어요</h2><p>첫 공개방을 열고 같이 들을 사람을 기다려 보세요.</p><a href="/">공개방 만들기</a></div>
           ) : (
             <div className="public-room-list">
               {rooms.map((room) => {
@@ -425,7 +425,7 @@ function PublicRoomsScreen() {
                     </div>
                     <div className="public-room-actions">
                       <span className={isFull ? 'full' : ''}>● {room.participantCount}/{room.maxParticipants}</span>
-                      {isFull ? <b>입장 마감</b> : <Link href={`/room/${room.code}`}>참가하기</Link>}
+                      {isFull ? <b>입장 마감</b> : <a href={`/room/${room.code}`}>참가하기</a>}
                     </div>
                   </article>
                 );
@@ -434,7 +434,7 @@ function PublicRoomsScreen() {
           )}
         </div>
 
-        <Link href="/" className="public-create-bar"><span>＋</span><b>내 음악방 만들기</b><small>비밀방 또는 공개방</small></Link>
+        <a href="/" className="public-create-bar"><span>＋</span><b>내 음악방 만들기</b><small>비밀방 또는 공개방</small></a>
       </section>
     </main>
   );
@@ -445,8 +445,8 @@ function HelpScreen() {
     <main className="page-stage home-stage">
       <section className="app-shell help-shell" aria-label="SYNCROOM 도움말">
         <header className="home-nav">
-          <Link href="/" className="brand-lockup"><BrandMark /><b>SYNCROOM</b></Link>
-          <Link href="/" className="close-help" aria-label="홈으로 돌아가기">×</Link>
+          <a href="/" className="brand-lockup"><BrandMark /><b>SYNCROOM</b></a>
+          <a href="/" className="close-help" aria-label="홈으로 돌아가기">×</a>
         </header>
         <div className="help-scroll">
           <p className="home-kicker">QUICK GUIDE</p>
@@ -472,7 +472,7 @@ function HelpScreen() {
             <details><summary>초대 코드는 얼마나 유지되나요?<span>＋</span></summary><p>방이 유지되는 동안 사용할 수 있어요. 방이 삭제되거나 만료되면 해당 코드도 함께 만료되고 별도 안내가 표시됩니다.</p></details>
           </section>
 
-          <Link href="/" className="primary-start help-home">홈으로 돌아가기</Link>
+          <a href="/" className="primary-start help-home">홈으로 돌아가기</a>
         </div>
       </section>
     </main>
@@ -1317,7 +1317,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
                 <p className="home-kicker">INVITE EXPIRED</p>
                 <h2 id="guest-gate-title">초대 코드가 만료되었어요</h2>
                 <p className="expired-copy">방이 종료되어 <strong>{roomCode}</strong> 코드는 더 이상 사용할 수 없어요.<br />방장에게 새 초대 코드를 요청해 주세요.</p>
-                <Link className="primary-start" href="/">홈에서 새 방 찾기 <span>→</span></Link>
+                <a className="primary-start" href="/">홈에서 새 방 찾기 <span>→</span></a>
               </div>
             ) : (
               <form className="guest-card" onSubmit={joinAsGuest}>
@@ -1328,7 +1328,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
                 <label>이 방에서 사용할 닉네임<input autoFocus value={guestName} maxLength={12} onChange={(event) => setGuestName(event.target.value)} placeholder="닉네임 입력" /></label>
                 {roomError && <p className="form-error" role="alert">{roomError}</p>}
                 <button className="primary-start" type="submit" disabled={!guestName.trim()}>로그인 없이 입장하기 <span>→</span></button>
-                <Link href="/">다른 방 찾기</Link>
+                <a href="/">다른 방 찾기</a>
               </form>
             )}
           </div>
