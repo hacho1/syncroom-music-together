@@ -87,6 +87,7 @@ type YouTubeNamespace = {
       onReady(event: YouTubePlayerEvent): void;
       onStateChange(event: YouTubePlayerEvent): void;
       onError(event: YouTubePlayerEvent): void;
+      onAutoplayBlocked?(): void;
     };
   }) => YouTubePlayer;
 };
@@ -511,6 +512,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   const [demoSearch, setDemoSearch] = useState(false);
   const [playerReady, setPlayerReady] = useState(false);
   const [playerError, setPlayerError] = useState('');
+  const [needsPlaybackGesture, setNeedsPlaybackGesture] = useState(false);
   const [playbackRevision, setPlaybackRevision] = useState(0);
   const socketRef = useRef<Socket | null>(null);
   const revisionRef = useRef(0);
@@ -523,9 +525,25 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
   const volumeRef = useRef(75);
   const isMutedRef = useRef(false);
   const durationSyncRef = useRef('');
+  const playbackCheckTimerRef = useRef<number | null>(null);
   const roomActionRef = useRef<(payload: Record<string, unknown>) => Promise<RoomState>>(async () => {
     throw new Error('음악방 연결을 준비하고 있어요.');
   });
+
+  const clearPlaybackCheck = useCallback(() => {
+    if (playbackCheckTimerRef.current === null) return;
+    window.clearTimeout(playbackCheckTimerRef.current);
+    playbackCheckTimerRef.current = null;
+  }, []);
+
+  const verifyLocalPlayback = useCallback((player: YouTubePlayer) => {
+    clearPlaybackCheck();
+    playbackCheckTimerRef.current = window.setTimeout(() => {
+      playbackCheckTimerRef.current = null;
+      if (playerRef.current !== player || !isPlayingRef.current) return;
+      setNeedsPlaybackGesture(player.getPlayerState() !== 1);
+    }, 900);
+  }, [clearPlaybackCheck]);
 
   const applyRoomState = useCallback((state: RoomState) => {
     const revisionChanged = revisionRef.current !== state.playback.revision;
@@ -536,6 +554,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     setRoomMembers(state.members);
     setIsHost(state.room.isHost);
     setIsPlaying(state.playback.isPlaying);
+    if (!state.playback.isPlaying) setNeedsPlaybackGesture(false);
     setShuffleEnabled(state.playback.shuffle);
     setPlaybackRevision(state.playback.revision);
     isHostRef.current = state.room.isHost;
@@ -772,6 +791,11 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
           },
           onStateChange: ({ data, target }) => {
             const position = Math.max(0, target.getCurrentTime() || 0);
+            if (data === 1) {
+              clearPlaybackCheck();
+              setNeedsPlaybackGesture(false);
+              setPlayerError('');
+            }
             if (data === 0 && isHostRef.current) {
               void roomActionRef.current({ action: 'playback:next' })
                 .catch(() => setToast('재생이 끝났어요. 다음 곡을 신청해 주세요.'));
@@ -788,6 +812,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
                 .catch(() => setToast('일시정지 상태를 동기화하지 못했어요.'));
             }
           },
+          onAutoplayBlocked: () => setNeedsPlaybackGesture(true),
           onError: () => setPlayerError('이 YouTube 영상은 여기서 재생할 수 없어요.'),
         },
       });
@@ -798,12 +823,14 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
 
     return () => {
       cancelled = true;
+      clearPlaybackCheck();
       setPlayerReady(false);
+      setNeedsPlaybackGesture(false);
       playerRef.current?.destroy();
       playerRef.current = null;
       loadedVideoIdRef.current = '';
     };
-  }, [roomReady]);
+  }, [clearPlaybackCheck, roomReady]);
 
   useEffect(() => {
     const player = playerRef.current;
@@ -814,8 +841,12 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
     try {
       if (loadedVideoIdRef.current !== videoId) {
         loadedVideoIdRef.current = videoId;
-        if (isPlaying) player.loadVideoById({ videoId, startSeconds: position });
-        else player.cueVideoById({ videoId, startSeconds: position });
+        if (isPlaying) {
+          player.loadVideoById({ videoId, startSeconds: position });
+          verifyLocalPlayback(player);
+        } else {
+          player.cueVideoById({ videoId, startSeconds: position });
+        }
         return;
       }
 
@@ -823,12 +854,15 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
       if (Number.isFinite(playerPosition) && Math.abs(playerPosition - position) > 2) {
         player.seekTo(position, true);
       }
-      if (isPlaying && player.getPlayerState() !== 1) player.playVideo();
+      if (isPlaying && player.getPlayerState() !== 1) {
+        player.playVideo();
+        verifyLocalPlayback(player);
+      }
       if (!isPlaying && player.getPlayerState() === 1) player.pauseVideo();
     } catch {
       // Player errors are surfaced through the IFrame API's onError event.
     }
-  }, [currentTrack.videoId, isPlaying, playbackRevision, playerReady]);
+  }, [currentTrack.videoId, isPlaying, playbackRevision, playerReady, verifyLocalPlayback]);
 
   useEffect(() => {
     if (!playerReady || !isHost || !isYouTubeVideoId(currentTrack.videoId)) return;
@@ -915,9 +949,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
 
     if (!isHost) {
       if (isPlaying && playerReady && playerRef.current) {
-        playerRef.current.seekTo(elapsed, true);
-        playerRef.current.playVideo();
-        setToast('이 기기에서 재생을 시작했어요');
+        startPlaybackOnThisDevice();
       } else {
         setToast('DJ가 재생하면 여기서 함께 들을 수 있어요');
       }
@@ -926,9 +958,7 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
 
     const player = playerReady ? playerRef.current : null;
     if (isPlaying && player && player.getPlayerState() !== 1) {
-      player.seekTo(elapsed, true);
-      player.playVideo();
-      setToast('이 기기에서 재생을 시작했어요');
+      startPlaybackOnThisDevice();
       return;
     }
 
@@ -938,12 +968,42 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
       if (nextPlaying) {
         player?.seekTo(elapsed, true);
         player?.playVideo();
+        if (player) verifyLocalPlayback(player);
       } else {
         player?.pauseVideo();
+        clearPlaybackCheck();
+        setNeedsPlaybackGesture(false);
       }
       await roomAction({ action: 'playback:set', playing: nextPlaying, position: elapsed });
     } catch (actionError) {
       setToast(actionError instanceof Error ? actionError.message : '재생 상태를 바꾸지 못했어요.');
+    }
+  }
+
+  function startPlaybackOnThisDevice() {
+    const player = playerRef.current;
+    if (!playerReady || !player || !isYouTubeVideoId(currentTrack.videoId)) {
+      setToast('플레이어를 준비하고 있어요');
+      return;
+    }
+
+    try {
+      if (isMutedRef.current || volumeRef.current === 0) {
+        volumeRef.current = 75;
+        isMutedRef.current = false;
+        setVolume(75);
+        setIsMuted(false);
+        player.setVolume(75);
+        player.unMute();
+      }
+      player.seekTo(Math.max(0, elapsed), true);
+      player.playVideo();
+      setNeedsPlaybackGesture(false);
+      verifyLocalPlayback(player);
+      setToast('이 기기에서 소리와 재생을 시작했어요');
+    } catch {
+      setNeedsPlaybackGesture(true);
+      setToast('재생 버튼을 한 번 더 눌러 주세요');
     }
   }
 
@@ -1137,6 +1197,17 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
               {hasPlayableVideo && playerError && <div className="player-message error">{playerError}</div>}
             </div>
 
+            {hasPlayableVideo && isPlaying && needsPlaybackGesture && (
+              <button className="playback-unlock" type="button" onClick={startPlaybackOnThisDevice}>
+                <span className="playback-unlock-icon">▶</span>
+                <span className="playback-unlock-copy">
+                  <strong>탭해서 소리 켜기</strong>
+                  <small>현재 재생 위치부터 함께 들어요</small>
+                </span>
+                <span className="playback-unlock-arrow" aria-hidden="true">→</span>
+              </button>
+            )}
+
             <div className="track-copy">
               <div>
                 <p id="now-playing-title" className="section-kicker">지금 함께 듣는 중</p>
@@ -1189,9 +1260,9 @@ export function SyncroomApp({ initialView = 'room', initialCode = 'HNW824' }: { 
                 className="play-button"
                 onClick={() => void togglePlayback()}
                 disabled={!canPressPlay}
-                aria-label={!hasPlayableVideo ? '첫 예약곡 재생' : isPlaying ? '일시정지 또는 이 기기에서 재생' : '재생'}
+                aria-label={!hasPlayableVideo ? '첫 예약곡 재생' : isPlaying && needsPlaybackGesture ? '이 기기에서 소리와 재생 시작' : isPlaying ? '일시정지' : '재생'}
               >
-                {isPlaying ? <span className="pause-icon"><i /><i /></span> : <span className="play-icon">▶</span>}
+                {isPlaying && !needsPlaybackGesture ? <span className="pause-icon"><i /><i /></span> : <span className="play-icon">▶</span>}
               </button>
               <button type="button" className="side-control next-control" onClick={() => void playNext()} disabled={!roomReady} aria-label="다음 곡 또는 랜덤 추천곡">
                 <span>▶</span><i />
