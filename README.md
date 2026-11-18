@@ -32,8 +32,10 @@ pnpm dev --port 3000
 
 ### YouTube 검색과 실시간 연결
 
-- YouTube 검색과 공개 재생목록 가져오기에 사용할 `YOUTUBE_API_KEY`는 서버 환경변수에 설정합니다. 키 없이도 방 생성·초대와 데모 곡 검색을 해볼 수 있습니다.
-- 기본값으로는 주기 조회를 사용합니다. 소켓을 테스트하려면 별도 터미널에서 `pnpm realtime:dev`를 실행하고, 웹 서버 환경에 `SOCKET_SERVER_URL=http://localhost:4000`을 설정한 뒤 다시 실행합니다.
-- 웹 주소를 바꿨다면 소켓 서버의 `ALLOWED_ORIGINS`에도 실제 브라우저 주소를 등록합니다. [환경변수 예시](.env.example)
+추가 기능을 쓰려면 [환경변수 예시](.env.example)를 저장소 루트의 `.env`로 복사합니다.
+
+- 실제 YouTube 검색과 공개 재생목록 가져오기에는 `.env`에 `YOUTUBE_API_KEY`가 필요합니다. 키 없이도 방 생성·초대와 데모 곡 검색을 해볼 수 있습니다.
+- 기본값으로는 주기 조회를 사용합니다. 소켓을 테스트하려면 `.env`에 `SOCKET_SERVER_URL=http://localhost:4000`을 넣고 웹 서버를 재시작한 뒤, 별도 터미널에서 `pnpm realtime:dev`를 실행합니다.
+- 웹 주소를 바꿨다면 소켓 서버의 `ALLOWED_ORIGINS`에도 실제 브라우저 주소를 등록합니다.
 
 웹 빌드는 `pnpm build`, 실시간 서버 상태 확인은 [localhost:4000/health](http://localhost:4000/health)에서 할 수 있습니다.
